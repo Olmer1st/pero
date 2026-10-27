@@ -9,8 +9,8 @@ Status: in progress.
 | 1. Inventory report | confirmed (`docs/inventory/server-inventory.md`) |
 | 2. Base hardening | applied and verified from the dev laptop (`infra/scripts/part2/verify-from-client.sh`: all pass); physical lid-close test pending |
 | 3. Name resolution (`writer.local`); Tailscale and remote access deferred | confirmed |
-| 4. Toolchains | applied; `infra/scripts/part4/90-verify.sh audit deny.toml` reports clean; awaiting owner confirmation |
-| 5. llama.cpp and model benchmark | pending |
+| 4. Toolchains | confirmed |
+| 5. llama.cpp and model benchmark | built and benchmarked (`docs/benchmarks/llm-cpu.md`); awaiting owner's model pick |
 | 6. LLM service | pending |
 | 7. LanguageTool service | pending |
 | 8. Rust server skeleton | pending |
