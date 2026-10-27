@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Blocks commits that contain secrets. Requires gitleaks on PATH.
+set -euo pipefail
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not found; install it (see docs/PROGRESS.md)" >&2
+  exit 1
+fi
+exec gitleaks git --pre-commit --staged --redact --config "$(git rev-parse --show-toplevel)/.gitleaks.toml" --verbose
