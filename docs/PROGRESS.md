@@ -11,8 +11,8 @@ Status: in progress.
 | 3. Name resolution (`writer.local`); Tailscale and remote access deferred | confirmed |
 | 4. Toolchains | confirmed |
 | 5. llama.cpp and model benchmark | confirmed; owner picked Gemma 4 26B-A4B (`docs/benchmarks/llm-cpu.md`) |
-| 6. LLM service | installed and verified from the dev laptop; reboot test pending (owner, when near the server) |
-| 7. LanguageTool service | pending |
+| 6. LLM service | confirmed; reboot test pending (owner, when near the server) |
+| 7. LanguageTool service | installed and verified from the dev laptop; reboot test pending together with part 6 |
 | 8. Rust server skeleton | pending |
 | 9. Security baseline report | pending |
 
@@ -39,3 +39,12 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 - Memory when loaded: about 9.7 GB ordinary plus about 16 GB reclaimable file cache; about 22 GB stays available. Server log contains no prompt text.
 - Check: `infra/scripts/part6/verify-from-client.sh pero-server`. Logs: `sudo journalctl -u pero-llm`.
 - Open: reboot test. Run `verify-from-client.sh` again after a reboot; do it only when someone can reach the server physically (Wi-Fi reconnect after boot is untested).
+
+### LanguageTool service (part 7)
+- Service `pero-languagetool`: user `pero`, `127.0.0.1:8010` only (no firewall rule), enabled at boot, sandbox score 1.7. LanguageTool 6.8 (LGPL-2.1) from Maven Central, SHA-256 pinned, root-owned in `/opt/pero/languagetool/6.8`.
+- Callers must name the language (`language=ru-RU` or `en-US`); automatic detection is not available (no fastText model installed). 60 languages are loaded; no n-gram data, no telemetry.
+- Settings: `/etc/pero/languagetool.properties` (max text 200,000 chars, max check time 120 s). Java heap capped at 2 GB. A 51,000-character Russian chapter checks in about 4 seconds, about 0.9 GB resident.
+- Seeded checks pass: English `BASE_FORM`, `EN_A_VS_AN`, `HE_VERB_AGR`; Russian `MORFOLOGIK_RULE_RU_RU`. Logs hold lengths and timings only, no text.
+- Check: `infra/scripts/part7/verify-from-client.sh pero-server`. Logs: `sudo journalctl -u pero-languagetool`.
+- Open: reboot test with part 6 (run both `verify-from-client.sh` scripts afterwards).
+- Both services run together: about 22 GB of memory stays available.
