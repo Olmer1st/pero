@@ -12,6 +12,7 @@ done
 if [ "${1:-}" = audit ]; then
   DENY="$(readlink -f "${2:?path to deny.toml}")"
   D="$(mktemp -d)"; trap 'rm -rf "$D"' EXIT
-  ( cd "$D" && cargo init --quiet --name scratch . && cargo generate-lockfile --quiet \
+  ( cd "$D" && cargo init --quiet --name scratch . \
+    && sed -i '/^edition/a license = "Apache-2.0"' Cargo.toml && cargo generate-lockfile --quiet \
     && cargo audit && cargo deny --config "$DENY" check ) && echo "RESULT: auditor and policy checker clean" || echo "RESULT: FAILED"
 fi
