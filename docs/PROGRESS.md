@@ -10,8 +10,8 @@ Status: in progress.
 | 2. Base hardening | applied and verified from the dev laptop (`infra/scripts/part2/verify-from-client.sh`: all pass); physical lid-close test pending |
 | 3. Name resolution (`writer.local`); Tailscale and remote access deferred | confirmed |
 | 4. Toolchains | confirmed |
-| 5. llama.cpp and model benchmark | built and benchmarked (`docs/benchmarks/llm-cpu.md`); awaiting owner's model pick |
-| 6. LLM service | pending |
+| 5. llama.cpp and model benchmark | confirmed; owner picked Gemma 4 26B-A4B (`docs/benchmarks/llm-cpu.md`) |
+| 6. LLM service | installed and verified from the dev laptop; reboot test pending (owner, when near the server) |
 | 7. LanguageTool service | pending |
 | 8. Rust server skeleton | pending |
 | 9. Security baseline report | pending |
@@ -30,3 +30,12 @@ Status: in progress.
 | server | build-essential, pkg-config, libcurl4-openssl-dev | 12.12, 1.8.1-4, 8.14.1-2+deb13u7 | Debian 13 |
 
 Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crates denied). Run `cargo audit` and `cargo deny check` in the Rust workspace once it exists (part 8).
+
+### LLM service (part 6)
+- Service `pero-llm`: user `pero`, `127.0.0.1:8080` only (no firewall rule for 8080), enabled at boot, sandbox score 1.7 (`systemd-analyze security`).
+- Model: Gemma 4 26B-A4B-it UD-Q4_K_M in `/var/lib/pero/models/`; llama.cpp b11796 in `/opt/pero/llama.cpp/b11796/bin` (root-owned, `current` symlink).
+- Settings in `/etc/pero/llm.env` (model path, port, 8 threads, 16k context). Change, then `sudo systemctl restart pero-llm`.
+- Thinking is off by default (`--reasoning off`); a request can turn it on with `chat_template_kwargs: {"enable_thinking": true}`. With thinking on, Gemma 4 spends the token budget on reasoning first (empty `content` until it ends).
+- Memory when loaded: about 9.7 GB ordinary plus about 16 GB reclaimable file cache; about 22 GB stays available. Server log contains no prompt text.
+- Check: `infra/scripts/part6/verify-from-client.sh pero-server`. Logs: `sudo journalctl -u pero-llm`.
+- Open: reboot test. Run `verify-from-client.sh` again after a reboot; do it only when someone can reach the server physically (Wi-Fi reconnect after boot is untested).
