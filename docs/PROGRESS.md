@@ -5,8 +5,8 @@ Status: in progress.
 
 | Part | Status |
 |---|---|
-| 0. Repository skeleton and shared documents | in review |
-| 1. Inventory report | pending |
+| 0. Repository skeleton and shared documents | confirmed |
+| 1. Inventory report | in review (`docs/inventory/server-inventory.md`) |
 | 2. Base hardening | pending |
 | 3. Name resolution and remote access | pending |
 | 4. Toolchains | pending |
