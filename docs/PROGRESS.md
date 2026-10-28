@@ -58,7 +58,7 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 - Listening sockets from the network: 22, 9090 (Cockpit), 8443 only; LLM and LanguageTool stay on loopback.
 
 ### Backlog
-- Optional GPU benchmark for the local LLM (Intel HD 630 via Vulkan, NVIDIA 940MX via CUDA) against the CPU baseline, to run after turn 1 is merged: [issue #11](https://github.com/Olmer1st/pero/issues/11). Owner agreed.
+- GPU benchmark ([issue #11](https://github.com/Olmer1st/pero/issues/11)): phase 1 done and closed with no change, service stays CPU only. Intel HD 630 via Vulkan failed to load the model (out of device memory), the 940MX is not offered by the open-source driver, no GPU numbers; details in `docs/benchmarks/llm-gpu.md`. NVIDIA proprietary driver (phase 2) not approved. Revisit only if hardware or model changes.
 
 ### Operating the server
 | What | Unit / script | Restart | Logs | Check from the laptop |
