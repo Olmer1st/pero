@@ -2,6 +2,8 @@
 //! llama.cpp and LanguageTool stay on 127.0.0.1; this server only asks them whether they are alive.
 
 mod api;
+mod canon;
+mod canon_api;
 mod check;
 mod config;
 mod db;

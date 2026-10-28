@@ -68,6 +68,9 @@ impl IntoResponse for ApiError {
             }
             StoreError::Exists(m) => (StatusCode::CONFLICT, error_body("already_exists", m)),
             StoreError::InUse(m) => (StatusCode::CONFLICT, error_body("in_use", m)),
+            StoreError::Transition(m) => {
+                (StatusCode::CONFLICT, error_body("invalid_transition", m))
+            }
             StoreError::Conflict(current) => {
                 let mut body =
                     error_body("revision_conflict", "the scene changed since it was read");
@@ -265,6 +268,7 @@ async fn save_scene(
 
 pub fn router(store: Arc<Store>) -> Router {
     let graph = crate::graph_api::router(store.clone());
+    let canon = crate::canon_api::router(store.clone());
     Router::new()
         .route("/api/v1/books", get(list_books).post(create_book))
         .route(
@@ -291,6 +295,7 @@ pub fn router(store: Arc<Store>) -> Router {
         .route("/api/v1/scenes/{id}", get(get_scene).put(save_scene))
         .with_state(store)
         .merge(graph)
+        .merge(canon)
 }
 
 #[cfg(test)]

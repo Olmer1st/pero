@@ -44,6 +44,8 @@ pub enum StoreError {
     Exists(String),
     /// Something else still depends on it, so it cannot be deleted.
     InUse(String),
+    /// The requested status change is not allowed from the current status.
+    Transition(String),
     Internal(String),
 }
 
@@ -54,6 +56,7 @@ impl std::fmt::Display for StoreError {
             | StoreError::Invalid(m)
             | StoreError::Exists(m)
             | StoreError::InUse(m)
+            | StoreError::Transition(m)
             | StoreError::Internal(m) => f.write_str(m),
             StoreError::Conflict(_) => f.write_str("the scene changed since it was read"),
             StoreError::Dirty => f.write_str("the book repository has uncommitted changes"),
@@ -541,6 +544,8 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         }
+        // Facts that cite a passage removed, merged or edited by this change are flagged, never deleted.
+        crate::canon::flag_stale(&mut tx, book_id).await?;
         tx.commit().await?;
         Ok(report)
     }

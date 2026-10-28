@@ -23,7 +23,7 @@ type Shared = Arc<Store>;
 
 /// Reads `?key=value&...` for the few simple filters. Values are plain ASCII tokens (kinds, IDs,
 /// `true`/`false`), so no percent-decoding is needed; anything else is refused.
-fn params(raw: Option<String>, allowed: &[&str]) -> ApiResult<HashMap<String, String>> {
+pub(crate) fn params(raw: Option<String>, allowed: &[&str]) -> ApiResult<HashMap<String, String>> {
     let mut out = HashMap::new();
     for pair in raw.unwrap_or_default().split('&').filter(|p| !p.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));

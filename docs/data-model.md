@@ -106,10 +106,48 @@ Rules:
 - Query strings accept only plain ASCII values (kinds, IDs, `true`/`false`) and only the documented keys; there is no server-side name search (the client filters the list; books are small).
 - Text is stored exactly as sent: no Unicode normalisation, «ёлочки», dashes, «ё» and NBSP survive.
 
+## Canon ledger API (part 5)
+SQLite only. A fact is a statement about the story with a status, evidence passages and a status history. Facts are never deleted: a fact that turns out wrong is rejected and stays in the history.
+
+| Method and path | Purpose |
+|---|---|
+| `POST /books/{id}/facts` | create `{text, entity_id?, origin?, status?, source_ref?, evidence?: [{passage_id}]}` |
+| `GET /books/{id}/facts[?status=&entity=&passage=&origin=&stale=]` | list; filters combine with AND; `entity` and `passage` give "facts about this entity" and "facts citing this passage" |
+| `GET`, `PATCH /facts/{id}` | read (with evidence); edit `{text?, entity_id?, source_ref?}` (`null` clears the last two); the status is not editable here |
+| `POST /facts/{id}/approve`, `/reject`, `/reopen` | change the status; optional body `{"reason"}` (or no body) |
+| `PUT /facts/{id}/evidence` | `{evidence: [{passage_id}]}` replaces the citations with fresh ones and clears the stale flag |
+| `GET /facts/{id}/history` | every status change: from, to, who, why, when |
+| `GET /passages/{id}` | index information of a passage: scene, position, `active` or `removed`, `merged_into` (the text itself is read from the scene) |
+
+**Statuses:** `explicit` (stated in the text), `author_approved`, `ai_hypothesis`, `rejected` (a refused hypothesis or a retracted fact).
+
+**How a fact starts** (`origin` is `author` by default):
+| Origin | Allowed starting status | Evidence |
+|---|---|---|
+| `author` | `author_approved` (default) or `explicit`; entering a fact is the author's explicit act, so approval is recorded at once | required for `explicit`, optional for `author_approved` (backstory not yet in the text) |
+| `ai` | only `ai_hypothesis`; asking for anything else is refused | at least one passage |
+| `import` | only `explicit` | at least one passage |
+
+**The approval rule.** An AI hypothesis becomes canon only through `approve`, an explicit act that records who and when (`approved_by`, `approved_at`). Every other route is closed: creation with another status is refused, the approval fields cannot be sent, `PATCH` has no status, and the database itself refuses `author_approved` without an approval record.
+
+**Status changes:**
+| Call | From | To |
+|---|---|---|
+| `approve` | `ai_hypothesis`, `rejected` | `author_approved` |
+| `reject` | any status except `rejected` | `rejected` |
+| `reopen` | `author_approved`, `rejected`, only for facts that came from AI | `ai_hypothesis` (approval record cleared) |
+
+Anything else is 409 `invalid_transition`. Each change adds a history row, so a mistaken approval is reversible and auditable. Explicit facts need no approval.
+
+**Evidence and stale facts.** Evidence cites passages that exist in the same book and are still active, and remembers the passage text hash at citing time. Whenever the manuscript index changes (a save, a reorder, a reindex), every fact that cites a passage that was **removed**, **merged into another** or **edited** is flagged `stale` with a reason, never deleted; the evidence entries show which passage is the problem (`passage_status`, `changed`). A removal or merge takes precedence over an earlier "edited" reason. The flag clears when the author re-cites with `PUT /facts/{id}/evidence`. Approving a stale fact is allowed (it is the author's call) and keeps the flag. Edits to other paragraphs, additions and reordering flag nothing.
+
+**Actor.** Until device authentication exists (part 6) every change is recorded as `api`; AI facts record `ai:<source_ref>`.
+
 ## Known gaps in this part
 - Import supports only the rules above (one file per chapter, `#`/`##` headings, plain paragraphs). Block quotes, lists, tables, images and deeper headings are kept as paragraph text if they sit inside a paragraph, but a line that starts a block with `#` is refused. Whether the owner's real chapters fit is decided by running `check-import` on them.
 - Import creates a new book each time; importing again into an existing book is not supported.
 - The story graph has no edit history or undo; it changes in place.
+- Bulk approval and bulk rejection of facts (turn 7) are not here; each fact is approved one call at a time. A passage that comes back (undo) does not clear the stale flags it caused; the author re-cites to clear them.
 - Deleting chapters, scenes or books is not implemented; a file deleted by hand leaves a stale index row until the delete operation exists.
 - A paragraph moves between scenes in two saves (remove, then claim), not atomically.
 - The index is rebuilt for the whole book after each change; fine for novel-sized books, to be optimised if it shows.
@@ -138,7 +176,7 @@ Rules:
 | Table | Purpose | Key columns |
 |---|---|---|
 | `facts` | A statement about the story | `entity_id` (optional subject), `text`, `status`, `origin` (`author`/`ai`/`import`), `source_ref`, `stale`, `stale_reason`, `approved_by`, `approved_at` |
-| `fact_evidence` | Supporting passages (one or more, enforced by the API) | `fact_id`, `passage_id`, `text_hash` at citing time |
+| `fact_evidence` | Supporting passages (at least one for explicit and AI facts, enforced by the API) | `fact_id`, `passage_id`, `text_hash` at citing time |
 | `fact_status_history` | Every status change | `fact_id`, `from_status`, `to_status`, `changed_by`, `reason`, `changed_at` |
 
 Fact statuses: `explicit` (stated in the text), `author_approved`, `ai_hypothesis`, `rejected` (the author refused a hypothesis; added to the three in the handoff so a refusal has somewhere to go). Rules in the schema:
