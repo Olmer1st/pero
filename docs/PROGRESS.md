@@ -1,19 +1,19 @@
 # Progress
 
 ## Turn 1 — server bootstrap
-Status: all nine parts done and checked; reboot test (parts 6–8) and lid-close test (part 2) pending on the owner's physical access. One pull request for the turn awaits the owner's merge.
+Status: complete and merged (PR 13). Reboot test passed on 2026-10-28; only the part 2 lid-close test is still pending on the owner's physical access.
 
 | Part | Status |
 |---|---|
 | 0. Repository skeleton and shared documents | confirmed |
 | 1. Inventory report | confirmed (`docs/inventory/server-inventory.md`) |
-| 2. Base hardening | applied and verified from the dev laptop (`infra/scripts/part2/verify-from-client.sh`: all pass); physical lid-close test pending |
+| 2. Base hardening | applied and verified from the dev laptop (`infra/scripts/part2/verify-from-client.sh`: all pass); physical lid-close test still pending |
 | 3. Name resolution (`writer.local`); Tailscale and remote access deferred | confirmed |
 | 4. Toolchains | confirmed |
 | 5. llama.cpp and model benchmark | confirmed; owner picked Gemma 4 26B-A4B (`docs/benchmarks/llm-cpu.md`) |
-| 6. LLM service | confirmed; reboot test pending (owner, when near the server) |
-| 7. LanguageTool service | confirmed; reboot test pending together with part 6 |
-| 8. Rust server skeleton | installed and verified from the dev laptop; reboot test pending together with parts 6 and 7 |
+| 6. LLM service | confirmed; reboot test passed 2026-10-28 |
+| 7. LanguageTool service | confirmed; reboot test passed 2026-10-28 |
+| 8. Rust server skeleton | confirmed; reboot test passed 2026-10-28 |
 | 9. Security baseline report | `docs/security/baseline.md`; only 22, 8443 and 9090 answer from the network (Cockpit 9090 is an accepted exception) |
 
 ### Setup notes
@@ -38,7 +38,7 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 - Thinking is off by default (`--reasoning off`); a request can turn it on with `chat_template_kwargs: {"enable_thinking": true}`. With thinking on, Gemma 4 spends the token budget on reasoning first (empty `content` until it ends).
 - Memory when loaded: about 9.7 GB ordinary plus about 16 GB reclaimable file cache; about 22 GB stays available. Server log contains no prompt text.
 - Check: `infra/scripts/part6/verify-from-client.sh pero-server`. Logs: `sudo journalctl -u pero-llm`.
-- Open: reboot test. Run `verify-from-client.sh` again after a reboot; do it only when someone can reach the server physically (Wi-Fi reconnect after boot is untested).
+- Reboot test passed 2026-10-28: all three services came back active by themselves and Wi-Fi reconnected.
 
 ### LanguageTool service (part 7)
 - Service `pero-languagetool`: user `pero`, `127.0.0.1:8010` only (no firewall rule), enabled at boot, sandbox score 1.7. LanguageTool 6.8 (LGPL-2.1) from Maven Central, SHA-256 pinned, root-owned in `/opt/pero/languagetool/6.8`.
@@ -46,7 +46,7 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 - Settings: `/etc/pero/languagetool.properties` (max text 200,000 chars, max check time 120 s). Java heap capped at 2 GB. A 51,000-character Russian chapter checks in about 4 seconds, about 0.9 GB resident.
 - Seeded checks pass: English `BASE_FORM`, `EN_A_VS_AN`, `HE_VERB_AGR`; Russian `MORFOLOGIK_RULE_RU_RU`. Logs hold lengths and timings only, no text.
 - Check: `infra/scripts/part7/verify-from-client.sh pero-server`. Logs: `sudo journalctl -u pero-languagetool`.
-- Open: reboot test with part 6 (run both `verify-from-client.sh` scripts afterwards).
+- Reboot test passed 2026-10-28 together with parts 6 and 8.
 - Both services run together: about 22 GB of memory stays available.
 
 ### Pero server (part 8)
@@ -72,7 +72,8 @@ The server starts the three services in that order at boot. The owner reaches th
 Privileged steps stay reviewed scripts: the owner installs a one-time limited grant (`infra/scripts/grant-sudo.sh`) when the assistant should run them, and removes it afterwards (`sudo rm /etc/sudoers.d/pero-<bundle>` **on the server**).
 
 ### Known issues
-- Reboot test pending for parts 6, 7 and 8 (Wi-Fi reconnection after boot untested); lid-close test pending for part 2. Do both when physically at the server, then rerun the three `verify-from-client.sh` scripts.
+- Lid-close test (part 2) still pending the owner at the server.
+- **The server's address changes after a reboot** (DHCP lease: .105 became .106 on 2026-10-28). Use `writer.local` (the SSH alias `pero-server` now points to it); the server certificate also lists the old numeric address, so `https://<number>:8443` shows a name mismatch. Fix: a DHCP reservation for the server in the router (owner), then renew the certificate if the reserved address differs from the one inside it.
 - `/health` has no login; no idle timeout after the TLS handshake.
 - Wi-Fi only, DHCP lease not reserved.
 - Server certificate expires 2027-10-28 (renew by 2027-09-28); back up `~/.pero-ca` offline.
