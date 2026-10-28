@@ -37,13 +37,13 @@ books/<book-id>/
 ```
 - Order is the numeric prefix. Reordering is a rename (Git records it as a move) in one commit; IDs live inside the files and never change. Folder and file names are ASCII slugs made from the title when created (Cyrillic transliterated) and do not follow later title changes.
 - A scene file is a TOML block between `+++` lines (`id`, `title`, `language`, optional `pov`, `date`, `location`), then paragraphs separated by blank lines, each ending with ` <!-- p:ID -->`. A paragraph may span several lines. Headings and scene breaks are not part of a scene file; chapter and scene titles live in the TOML.
-- **One commit per change**, made under a per-book lock: the working tree must be clean (otherwise the change is refused with `repository_dirty` and nothing is touched), the change is written, committed, and the index is rebuilt from the repository. A failure before the commit rolls the change back. A save that changes nothing makes no commit. Commit authors are the acting device (`api` until device authentication exists).
+- **One commit per change**, made under a per-book lock: the working tree must be clean (otherwise the change is refused with `repository_dirty` and nothing is touched), the change is written, committed, and the index is rebuilt from the repository. A failure before the commit rolls the change back. A save that changes nothing makes no commit. Commit authors are the acting device (the name of the device that made the change).
 - **Saving a scene** sends the whole scene and the `base_revision` it was read at (SHA-256 of the file). If the file changed since, the answer is 409 `revision_conflict` carrying the current scene; there is no automatic merge. Paragraphs that keep their `id` keep their identity whatever happened to their text or position; paragraphs without `id` are new; paragraphs left out are removed (tombstoned). `merged` names which staying passage absorbed a removed one. An `id` of a removed passage may be sent again (undo). An `id` that is still active in another scene is refused: remove it there first, then claim it.
 - Scene fields (`title`, `language`, `pov`, `date`, `location`) are replaced as a whole; empty values are dropped.
 - **Paragraph rules:** no blank line inside, not empty, not starting with `#`, not a scene-break line (`***`, `---`, `___`), no passage marker inside the text.
 - **Rebuilding the index:** `POST /api/v1/books/{id}/reindex` re-reads the repository and fixes the SQLite index (also done after every change). Paragraphs that were added by hand have no marker; they are reported as `unmarked_paragraphs` and get an ID on the next save from Pero.
 
-## API (`/api/v1`, JSON; no login yet, so not mounted unless `data_dir` is set)
+## API (`/api/v1`, JSON; every route needs a device token; not mounted unless `data_dir` is set)
 | Method and path | Purpose |
 |---|---|
 | `GET`, `POST /books` | list; create `{title, language}` |
@@ -141,10 +141,34 @@ Anything else is 409 `invalid_transition`. Each change adds a history row, so a 
 
 **Evidence and stale facts.** Evidence cites passages that exist in the same book and are still active, and remembers the passage text hash at citing time. Whenever the manuscript index changes (a save, a reorder, a reindex), every fact that cites a passage that was **removed**, **merged into another** or **edited** is flagged `stale` with a reason, never deleted; the evidence entries show which passage is the problem (`passage_status`, `changed`). A removal or merge takes precedence over an earlier "edited" reason. The flag clears when the author re-cites with `PUT /facts/{id}/evidence`. Approving a stale fact is allowed (it is the author's call) and keeps the flag. Edits to other paragraphs, additions and reordering flag nothing.
 
-**Actor.** Until device authentication exists (part 6) every change is recorded as `api`; AI facts record `ai:<source_ref>`.
+**Actor.** Every change is recorded with the name of the device that made it (`approved_by`, `changed_by`); AI facts record `ai:<source_ref>`.
+
+## Device authentication (part 6)
+Every `/api/v1` route needs `Authorization: Bearer <token>` from a registered device that is not revoked. `GET /health` stays open (it carries no manuscript data; the question of protecting it is issue #12).
+
+**Tokens.** A token is 256 random bits shown as `pero_` plus 64 lowercase hex characters. It is shown once, when the device is registered, and cannot be recovered: only its SHA-256 hash is stored (`devices.token_hash`), so a leaked database or backup cannot be used to log in. A 256-bit random token cannot be guessed, so there is no lockout or rate limiting; hashing with a slow function is unnecessary for the same reason. The token is checked against the database on every request, so a revocation takes effect immediately, in the running server.
+
+**Registering devices** happens only on the server, never through the API, so a stolen token cannot mint new ones:
+```
+sudo -u pero /opt/pero/server/current/pero-server device add "Vadim laptop" --config /etc/pero/server.toml
+sudo -u pero /opt/pero/server/current/pero-server device list   --config /etc/pero/server.toml
+sudo -u pero /opt/pero/server/current/pero-server device revoke "Vadim laptop" --config /etc/pero/server.toml
+```
+`add` prints the token once; put it in the client's password manager. The commands refuse to run as root, because the database files must stay owned by the service user. Names are 1 to 60 characters; a revoked name is never reused (the name stays in Git history and in the canon ledger, so it must never be ambiguous). When the server starts with `data_dir` set and no active device, it says so in its log.
+
+| Method and path | Purpose |
+|---|---|
+| `GET /me` | the device the token belongs to `{id, name}` |
+| `GET /devices` | all devices with created, last seen and revoked times (never a token or a hash) |
+| `POST /devices/{id}/revoke` | revoke a device; any device may revoke any device, itself included (a stolen token can lock others out, but the owner restores access on the server) |
+
+**Refusals.** Without a valid token, every route (and any path that does not exist) answers 401 `unauthorized` with `WWW-Authenticate: Bearer` and the same body, whatever was wrong: no header, wrong scheme, wrong shape, unknown token, revoked token. A large body is refused before it is read. The scheme is exactly `Bearer`.
+
+**Attribution.** The device name is the Git author of every manuscript commit and is recorded in `approved_by` and in the status history of canon facts. `last_seen_at` is refreshed at most once a minute per device.
 
 ## Known gaps in this part
 - Import supports only the rules above (one file per chapter, `#`/`##` headings, plain paragraphs). Block quotes, lists, tables, images and deeper headings are kept as paragraph text if they sit inside a paragraph, but a line that starts a block with `#` is refused. Whether the owner's real chapters fit is decided by running `check-import` on them.
+- Any device can revoke any other; there are no per-device permissions (one author, several devices).
 - Import creates a new book each time; importing again into an existing book is not supported.
 - The story graph has no edit history or undo; it changes in place.
 - Bulk approval and bulk rejection of facts (turn 7) are not here; each fact is approved one call at a time. A passage that comes back (undo) does not clear the stale flags it caused; the author re-cites to clear them.
@@ -184,8 +208,6 @@ Fact statuses: `explicit` (stated in the text), `author_approved`, `ai_hypothesi
 - `stale_reason` is allowed only when `stale = 1`.
 - Evidence and history rows must point at existing facts and passages.
 
-### Added later
-- Devices and token hashes (`0004_devices.sql`, part 6 of turn 2).
 
 ## Rules enforced by the database
 Foreign keys are on for every connection (`PRAGMA foreign_keys`); nothing cascades, so removing a parent row with children is refused. Enumerations, lengths, hash length and the passage and fact rules above are `CHECK` constraints. Tables are `STRICT`. The file uses WAL journaling and a 5-second busy timeout.

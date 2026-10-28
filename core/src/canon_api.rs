@@ -13,7 +13,7 @@ use axum::{
 use serde_json::{Value, json};
 
 use crate::{
-    api::ApiResult,
+    api::{ApiResult, AuthDevice},
     canon::{
         self, Action, EvidenceReplace, Fact, FactFilter, FactPatch, HistoryEntry, NewFact,
         PassageInfo, TransitionBody,
@@ -24,17 +24,15 @@ use crate::{
 
 type Shared = Arc<Store>;
 
-/// Who made the change, as recorded in the ledger. Becomes the device name once devices exist.
-const ACTOR: &str = "api";
-
 async fn create_fact(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(book): Path<String>,
     Json(n): Json<NewFact>,
 ) -> ApiResult<(StatusCode, Json<Fact>)> {
     Ok((
         StatusCode::CREATED,
-        Json(canon::create_fact(s.pool(), &book, &n, ACTOR).await?),
+        Json(canon::create_fact(s.pool(), &book, &n, &device.name).await?),
     ))
 }
 
@@ -84,38 +82,42 @@ fn reason_of(body: &Bytes) -> ApiResult<Option<String>> {
 
 async fn change_status(
     s: &Shared,
+    actor: &str,
     id: &str,
     action: Action,
     body: &Bytes,
 ) -> ApiResult<Json<Fact>> {
     let reason = reason_of(body)?;
     Ok(Json(
-        canon::transition(s.pool(), id, action, ACTOR, reason.as_deref()).await?,
+        canon::transition(s.pool(), id, action, actor, reason.as_deref()).await?,
     ))
 }
 
 async fn approve(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     body: Bytes,
 ) -> ApiResult<Json<Fact>> {
-    change_status(&s, &id, Action::Approve, &body).await
+    change_status(&s, &device.name, &id, Action::Approve, &body).await
 }
 
 async fn reject(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     body: Bytes,
 ) -> ApiResult<Json<Fact>> {
-    change_status(&s, &id, Action::Reject, &body).await
+    change_status(&s, &device.name, &id, Action::Reject, &body).await
 }
 
 async fn reopen(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     body: Bytes,
 ) -> ApiResult<Json<Fact>> {
-    change_status(&s, &id, Action::Reopen, &body).await
+    change_status(&s, &device.name, &id, Action::Reopen, &body).await
 }
 
 async fn replace_evidence(
@@ -374,7 +376,7 @@ mod tests {
         assert_eq!(st, OK, "{a}");
         assert_eq!(
             (a["status"].as_str(), a["approved_by"].as_str()),
-            (Some("author_approved"), Some("api"))
+            (Some("author_approved"), Some(crate::testkit::DEVICE_NAME))
         );
         assert!(a["approved_at"].is_string());
         let (st, e) = srv.call("POST", &format!("{one}/approve"), None).await;
@@ -409,7 +411,7 @@ mod tests {
             (
                 Some("ai_hypothesis"),
                 Some("author_approved"),
-                Some("api"),
+                Some(crate::testkit::DEVICE_NAME),
                 Some("сверено с третьей главой")
             )
         );
@@ -448,7 +450,11 @@ mod tests {
         let (st, r) = step("approve").await; // changed my mind
         assert_eq!(
             (st, r["status"].as_str(), r["approved_by"].as_str()),
-            (OK, Some("author_approved"), Some("api"))
+            (
+                OK,
+                Some("author_approved"),
+                Some(crate::testkit::DEVICE_NAME)
+            )
         );
         let (_, h) = srv.call("GET", &format!("{one}/history"), None).await;
         let path: Vec<&str> = h["history"]
@@ -529,7 +535,11 @@ mod tests {
                 a["origin"].as_str(),
                 a["approved_by"].as_str()
             ),
-            (Some("author_approved"), Some("author"), Some("api"))
+            (
+                Some("author_approved"),
+                Some("author"),
+                Some(crate::testkit::DEVICE_NAME)
+            )
         );
         assert!(a["approved_at"].is_string());
         assert_eq!(a["evidence"], json!([]));
@@ -545,7 +555,7 @@ mod tests {
                 h["history"][0]["from_status"].clone(),
                 h["history"][0]["changed_by"].as_str()
             ),
-            (Value::Null, Some("api"))
+            (Value::Null, Some(crate::testkit::DEVICE_NAME))
         );
         // an author fact is not an AI fact: it cannot be reopened as a hypothesis
         let (st, e) = srv

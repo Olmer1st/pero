@@ -10,6 +10,7 @@ pub const ENTITY: &str = "en";
 pub const RELATIONSHIP: &str = "rl";
 pub const EVENT: &str = "ev";
 pub const FACT: &str = "ft";
+pub const DEVICE: &str = "dv";
 
 /// A fresh 8-character code. Randomness comes from the operating system.
 pub fn code() -> String {

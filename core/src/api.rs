@@ -6,8 +6,10 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, FromRequestParts, Path, Request, State},
     http::StatusCode,
+    http::{HeaderValue, header, request::Parts},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -15,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
+    device::{self, Device, DeviceInfo},
     import::{ImportFile, ParagraphMode},
     store::{
         Book, Chapter, ExportFile, ImportSummary, SaveScene, Saved, Scene, SceneFields, SceneInfo,
@@ -24,9 +27,6 @@ use crate::{
 
 type Shared = Arc<Store>;
 pub(crate) type ApiResult<T> = Result<T, ApiError>;
-
-/// Who made the change, as recorded in Git. Becomes the device name once devices exist.
-const ACTOR: &str = "api";
 
 /// Largest import request (a whole manuscript as JSON).
 const IMPORT_LIMIT: usize = 16 * 1024 * 1024;
@@ -71,6 +71,7 @@ impl IntoResponse for ApiError {
             StoreError::Transition(m) => {
                 (StatusCode::CONFLICT, error_body("invalid_transition", m))
             }
+            StoreError::Unauthorized => return unauthorized(),
             StoreError::Conflict(current) => {
                 let mut body =
                     error_body("revision_conflict", "the scene changed since it was read");
@@ -143,11 +144,12 @@ async fn list_books(State(s): State<Shared>) -> ApiResult<Json<Vec<Book>>> {
 
 async fn create_book(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Json(b): Json<NewBook>,
 ) -> ApiResult<(StatusCode, Json<Book>)> {
     Ok((
         StatusCode::CREATED,
-        Json(s.create_book(&b.title, &b.language, ACTOR).await?),
+        Json(s.create_book(&b.title, &b.language, &device.name).await?),
     ))
 }
 
@@ -157,10 +159,13 @@ async fn get_book(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<
 
 async fn rename_book(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(t): Json<Title>,
 ) -> ApiResult<Json<Book>> {
-    Ok(Json(s.update_book_title(&id, &t.title, ACTOR).await?))
+    Ok(Json(
+        s.update_book_title(&id, &t.title, &device.name).await?,
+    ))
 }
 
 async fn list_chapters(
@@ -172,29 +177,35 @@ async fn list_chapters(
 
 async fn create_chapter(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(c): Json<NewChapter>,
 ) -> ApiResult<(StatusCode, Json<Chapter>)> {
     Ok((
         StatusCode::CREATED,
-        Json(s.create_chapter(&id, &c.title, c.position, ACTOR).await?),
+        Json(
+            s.create_chapter(&id, &c.title, c.position, &device.name)
+                .await?,
+        ),
     ))
 }
 
 async fn reorder_chapters(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(o): Json<Order>,
 ) -> ApiResult<Json<Vec<Chapter>>> {
-    Ok(Json(s.reorder_chapters(&id, &o.ids, ACTOR).await?))
+    Ok(Json(s.reorder_chapters(&id, &o.ids, &device.name).await?))
 }
 
 async fn import_book(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Json(r): Json<ImportRequest>,
 ) -> ApiResult<(StatusCode, Json<ImportSummary>)> {
     let summary = s
-        .import_book(&r.title, &r.language, r.mode, &r.files, ACTOR)
+        .import_book(&r.title, &r.language, r.mode, &r.files, &device.name)
         .await?;
     Ok((StatusCode::CREATED, Json(summary)))
 }
@@ -215,10 +226,13 @@ async fn get_chapter(State(s): State<Shared>, Path(id): Path<String>) -> ApiResu
 
 async fn rename_chapter(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(t): Json<Title>,
 ) -> ApiResult<Json<Chapter>> {
-    Ok(Json(s.update_chapter_title(&id, &t.title, ACTOR).await?))
+    Ok(Json(
+        s.update_chapter_title(&id, &t.title, &device.name).await?,
+    ))
 }
 
 async fn list_scenes(
@@ -230,6 +244,7 @@ async fn list_scenes(
 
 async fn create_scene(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(n): Json<NewScene>,
 ) -> ApiResult<(StatusCode, Json<Scene>)> {
@@ -242,16 +257,20 @@ async fn create_scene(
     };
     Ok((
         StatusCode::CREATED,
-        Json(s.create_scene(&id, &fields, n.position, ACTOR).await?),
+        Json(
+            s.create_scene(&id, &fields, n.position, &device.name)
+                .await?,
+        ),
     ))
 }
 
 async fn reorder_scenes(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(o): Json<Order>,
 ) -> ApiResult<Json<Vec<SceneInfo>>> {
-    Ok(Json(s.reorder_scenes(&id, &o.ids, ACTOR).await?))
+    Ok(Json(s.reorder_scenes(&id, &o.ids, &device.name).await?))
 }
 
 async fn get_scene(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Scene>> {
@@ -260,15 +279,94 @@ async fn get_scene(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult
 
 async fn save_scene(
     State(s): State<Shared>,
+    AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
     Json(body): Json<SaveScene>,
 ) -> ApiResult<Json<Saved>> {
-    Ok(Json(s.save_scene(&id, &body, ACTOR).await?))
+    Ok(Json(s.save_scene(&id, &body, &device.name).await?))
+}
+
+/// The device that made the request; present on every route behind `require_device`.
+pub struct AuthDevice(pub Device);
+
+impl<S: Send + Sync> FromRequestParts<S> for AuthDevice {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, ApiError> {
+        parts
+            .extensions
+            .get::<Device>()
+            .cloned()
+            .map(AuthDevice)
+            .ok_or(ApiError(StoreError::Unauthorized))
+    }
+}
+
+/// 401 with the same body whatever was wrong (no token, wrong shape, unknown, revoked), so a caller
+/// learns nothing about which tokens exist.
+fn unauthorized() -> Response {
+    let mut res = (
+        StatusCode::UNAUTHORIZED,
+        Json(error_body(
+            "unauthorized",
+            "a valid device token is required",
+        )),
+    )
+        .into_response();
+    res.headers_mut()
+        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    res
+}
+
+fn bearer(req: &Request) -> Option<&str> {
+    req.headers()
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+}
+
+/// Every API request needs `Authorization: Bearer <token>` of a device that is not revoked. The
+/// token is checked against the database on every request, so a revocation applies at once.
+async fn require_device(State(store): State<Shared>, mut req: Request, next: Next) -> Response {
+    let Some(token) = bearer(&req) else {
+        return unauthorized();
+    };
+    match device::authenticate(store.pool(), token).await {
+        Ok(Some(device)) => {
+            req.extensions_mut().insert(device);
+            next.run(req).await
+        }
+        Ok(None) => unauthorized(),
+        Err(e) => ApiError(e).into_response(),
+    }
+}
+
+async fn me(AuthDevice(device): AuthDevice) -> Json<Device> {
+    Json(device)
+}
+
+async fn list_devices(State(s): State<Shared>) -> ApiResult<Json<Vec<DeviceInfo>>> {
+    Ok(Json(device::list(s.pool()).await?))
+}
+
+/// Any device can revoke any device, itself included. Devices are registered only on the server
+/// (`pero-server device add`), so a stolen token can lock others out but cannot mint new tokens.
+async fn revoke_device(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<DeviceInfo>> {
+    if !crate::ids::is_id(&id, crate::ids::DEVICE) {
+        return Err(StoreError::NotFound("device not found".into()).into());
+    }
+    Ok(Json(device::revoke(s.pool(), &id).await?))
 }
 
 pub fn router(store: Arc<Store>) -> Router {
     let graph = crate::graph_api::router(store.clone());
     let canon = crate::canon_api::router(store.clone());
+    let guard = store.clone();
     Router::new()
         .route("/api/v1/books", get(list_books).post(create_book))
         .route(
@@ -294,14 +392,19 @@ pub fn router(store: Arc<Store>) -> Router {
         .route("/api/v1/chapters/{id}/scenes/order", put(reorder_scenes))
         .route("/api/v1/scenes/{id}", get(get_scene).put(save_scene))
         .with_state(store)
+        .route("/api/v1/me", get(me))
+        .route("/api/v1/devices", get(list_devices))
+        .route("/api/v1/devices/{id}/revoke", post(revoke_device))
+        .with_state(guard.clone())
         .merge(graph)
         .merge(canon)
+        .layer(middleware::from_fn_with_state(guard, require_device))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::Server;
+    use crate::{device, testkit::Server};
 
     #[tokio::test]
     async fn a_book_can_be_written_and_read_through_the_api() {
@@ -580,5 +683,274 @@ mod tests {
             (st, r["unmarked_paragraphs"].as_i64()),
             (StatusCode::OK, Some(0))
         );
+    }
+
+    // ---- device authentication ----
+
+    /// One request per route group (and a few that do not exist): none may be answered without a token.
+    const ROUTES: &[(&str, &str)] = &[
+        ("GET", "/api/v1/books"),
+        ("POST", "/api/v1/books"),
+        ("POST", "/api/v1/books/import"),
+        ("GET", "/api/v1/books/bk_00000000"),
+        ("GET", "/api/v1/books/bk_00000000/export"),
+        ("POST", "/api/v1/books/bk_00000000/reindex"),
+        ("GET", "/api/v1/chapters/ch_00000000"),
+        ("GET", "/api/v1/scenes/sc_00000000"),
+        ("PUT", "/api/v1/scenes/sc_00000000"),
+        ("GET", "/api/v1/books/bk_00000000/entities"),
+        ("DELETE", "/api/v1/entities/en_00000000"),
+        ("GET", "/api/v1/books/bk_00000000/relationships"),
+        ("GET", "/api/v1/books/bk_00000000/events"),
+        ("GET", "/api/v1/books/bk_00000000/facts"),
+        ("POST", "/api/v1/facts/ft_00000000/approve"),
+        ("GET", "/api/v1/passages/k7m2x9qa"),
+        ("GET", "/api/v1/me"),
+        ("GET", "/api/v1/devices"),
+        ("POST", "/api/v1/devices/dv_00000000/revoke"),
+        ("GET", "/api/v1/no-such-route"),
+        ("DELETE", "/api/v1/books"),
+    ];
+
+    #[tokio::test]
+    async fn no_route_answers_without_a_valid_token() {
+        let srv = Server::new("auth-required").await;
+        let unknown_but_well_formed = device::new_token();
+        let attempts: Vec<(&str, Option<String>)> = vec![
+            ("no header", None),
+            ("empty bearer", Some("Bearer ".into())),
+            ("bearer without token", Some("Bearer".into())),
+            ("wrong scheme", Some(format!("Basic {}", srv.token))),
+            (
+                "scheme only in lower case",
+                Some(format!("bearer {}", srv.token)),
+            ),
+            ("token without scheme", Some(srv.token.clone())),
+            ("garbage", Some("Bearer garbage".into())),
+            (
+                "truncated token",
+                Some(format!("Bearer {}", &srv.token[..20])),
+            ),
+            (
+                "upper-cased token",
+                Some(format!("Bearer {}", srv.token.to_uppercase())),
+            ),
+            (
+                "well-formed but unknown",
+                Some(format!("Bearer {unknown_but_well_formed}")),
+            ),
+            (
+                "two tokens",
+                Some(format!("Bearer {} {}", srv.token, srv.token)),
+            ),
+        ];
+        let mut first_body: Option<Value> = None;
+        for (method, path) in ROUTES {
+            for (what, header) in &attempts {
+                let body = (*method == "POST" || *method == "PUT").then(|| json!({}));
+                let (st, headers, json) = srv.raw(header.clone(), method, path, body).await;
+                assert_eq!(st, StatusCode::UNAUTHORIZED, "{method} {path} with {what}");
+                assert_eq!(headers.get("www-authenticate").unwrap(), "Bearer");
+                assert_eq!(json["error"]["code"], "unauthorized");
+                // the answer is identical whatever was wrong: nothing to learn about existing tokens
+                assert_eq!(
+                    first_body.get_or_insert(json.clone()),
+                    &json,
+                    "{method} {path} with {what}"
+                );
+                assert!(!json.to_string().contains(&srv.token));
+            }
+        }
+        // a large body is refused before it is read
+        let big = json!({"title": "X", "language": "ru", "files": [{"name": "a.md", "content": "я".repeat(3_000_000)}]});
+        let (st, _) = srv
+            .call_with(None, "POST", "/api/v1/books/import", Some(big))
+            .await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+        // nothing was created by any of the refused requests
+        let (_, books) = srv.call("GET", "/api/v1/books", None).await;
+        assert_eq!(books, json!([]));
+    }
+
+    #[tokio::test]
+    async fn a_valid_token_opens_every_route_and_identifies_the_device() {
+        let srv = Server::new("auth-valid").await;
+        for (method, path) in ROUTES {
+            if *path == "/api/v1/no-such-route" || (*method == "DELETE" && *path == "/api/v1/books")
+            {
+                continue;
+            }
+            let body = (*method == "POST" || *method == "PUT").then(|| json!({}));
+            let (st, _) = srv.call(method, path, body).await;
+            assert_ne!(st, StatusCode::UNAUTHORIZED, "{method} {path}");
+        }
+        let (st, me) = srv.call("GET", "/api/v1/me", None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(me["name"], crate::testkit::DEVICE_NAME);
+        assert!(me["id"].as_str().unwrap().starts_with("dv_"));
+        assert!(!me.to_string().contains(&srv.token));
+        let (_, devices) = srv.call("GET", "/api/v1/devices", None).await;
+        assert_eq!(devices.as_array().unwrap().len(), 1);
+        assert!(devices[0].get("token_hash").is_none() && devices[0]["last_seen_at"].is_string());
+        // unknown routes with a token are a plain 404
+        assert_eq!(
+            srv.call("GET", "/api/v1/no-such-route", None).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn revoking_one_device_leaves_the_others_working() {
+        let srv = Server::new("auth-revoke").await;
+        let laptop = srv.token.clone();
+        let phone = srv.add_device("phone").await;
+        let tablet = srv.add_device("tablet").await;
+        let status = |token: &str| {
+            let t = token.to_string();
+            let srv = &srv;
+            async move { srv.call_with(Some(&t), "GET", "/api/v1/me", None).await.0 }
+        };
+        for t in [&laptop, &phone, &tablet] {
+            assert_eq!(status(t).await, StatusCode::OK);
+        }
+
+        // revoked on the server (what `pero-server device revoke` does): effective at once, for the running server
+        device::revoke(srv.store.pool(), "phone").await.unwrap();
+        assert_eq!(status(&phone).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status(&laptop).await, StatusCode::OK);
+        assert_eq!(status(&tablet).await, StatusCode::OK);
+        let (st, _) = srv
+            .call_with(Some(&phone), "GET", "/api/v1/books", None)
+            .await;
+        assert_eq!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "the data routes refuse it too"
+        );
+
+        // revoked from another device through the API
+        let (_, list) = srv.call("GET", "/api/v1/devices", None).await;
+        let tablet_id = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["name"] == "tablet")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (st, done) = srv
+            .call(
+                "POST",
+                &format!("/api/v1/devices/{tablet_id}/revoke"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{done}");
+        assert!(done["revoked_at"].is_string());
+        assert_eq!(status(&tablet).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status(&laptop).await, StatusCode::OK);
+        let (st, again) = srv
+            .call(
+                "POST",
+                &format!("/api/v1/devices/{tablet_id}/revoke"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(
+            (st, again["error"]["code"].as_str()),
+            (StatusCode::CONFLICT, Some("invalid_transition"))
+        );
+        assert_eq!(
+            srv.call(
+                "POST",
+                "/api/v1/devices/dv_00000000/revoke",
+                Some(json!({}))
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            srv.call("POST", "/api/v1/devices/not-an-id/revoke", Some(json!({})))
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+
+        // a device can revoke itself; afterwards its token is dead
+        let (_, me) = srv.call("GET", "/api/v1/me", None).await;
+        let (st, _) = srv
+            .call(
+                "POST",
+                &format!("/api/v1/devices/{}/revoke", me["id"].as_str().unwrap()),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(status(&laptop).await, StatusCode::UNAUTHORIZED);
+
+        // a new device registered afterwards works, the revoked ones stay dead
+        let fresh = srv.add_device("fresh").await;
+        assert_eq!(status(&fresh).await, StatusCode::OK);
+        for t in [&laptop, &phone, &tablet] {
+            assert_eq!(status(t).await, StatusCode::UNAUTHORIZED);
+        }
+        let (_, list) = srv
+            .call_with(Some(&fresh), "GET", "/api/v1/devices", None)
+            .await;
+        assert_eq!(
+            list.as_array()
+                .unwrap()
+                .iter()
+                .filter(|d| d["revoked_at"].is_null())
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn changes_are_attributed_to_the_device_that_made_them() {
+        let srv = Server::new("auth-actor").await;
+        let phone = srv.add_device("phone").await;
+        let (st, book) = srv
+            .call(
+                "POST",
+                "/api/v1/books",
+                Some(json!({"title": "Книга", "language": "ru"})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED);
+        let book_id = book["id"].as_str().unwrap();
+        let (st, _) = srv
+            .call_with(
+                Some(&phone),
+                "POST",
+                &format!("/api/v1/books/{book_id}/chapters"),
+                Some(json!({"title": "Глава"})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED);
+        let repo = srv.dir_of_books().join(book_id);
+        let log = crate::git::log_messages(&repo);
+        assert_eq!(
+            log,
+            ["phone|Add chapter: Глава", "laptop|Create book: Книга"]
+        );
+
+        // facts: the author's fact and its approval record the device
+        let (_, fact) = srv
+            .call_with(
+                Some(&phone),
+                "POST",
+                &format!("/api/v1/books/{book_id}/facts"),
+                Some(json!({"text": "Факт автора"})),
+            )
+            .await;
+        assert_eq!(fact["approved_by"], "phone");
+        let (_, ai) = srv
+            .call("POST", &format!("/api/v1/books/{book_id}/facts"), Some(json!({"text": "Гипотеза", "origin": "ai", "source_ref": "skill", "evidence": []})))
+            .await;
+        assert!(ai["error"].is_object(), "an AI fact needs evidence: {ai}");
     }
 }

@@ -30,6 +30,20 @@ pub async fn open(path: &Path) -> Result<SqlitePool, String> {
     Ok(pool)
 }
 
+/// A private, migrated, in-memory database for tests (one connection, kept for the pool's lifetime).
+#[cfg(test)]
+pub async fn open_memory() -> SqlitePool {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect_with(base_options().in_memory(true))
+        .await
+        .unwrap();
+    migrate(&pool).await.unwrap();
+    pool
+}
+
 /// Applies all pending migrations. Running it again changes nothing.
 pub async fn migrate(pool: &SqlitePool) -> Result<(), String> {
     MIGRATOR
@@ -99,9 +113,10 @@ mod tests {
         }
     }
 
-    const ALL_TABLES: [&str; 12] = [
+    const ALL_TABLES: [&str; 13] = [
         "books",
         "chapters",
+        "devices",
         "entities",
         "entity_aliases",
         "fact_evidence",

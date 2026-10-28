@@ -46,6 +46,8 @@ pub enum StoreError {
     InUse(String),
     /// The requested status change is not allowed from the current status.
     Transition(String),
+    /// No valid device token.
+    Unauthorized,
     Internal(String),
 }
 
@@ -60,6 +62,7 @@ impl std::fmt::Display for StoreError {
             | StoreError::Internal(m) => f.write_str(m),
             StoreError::Conflict(_) => f.write_str("the scene changed since it was read"),
             StoreError::Dirty => f.write_str("the book repository has uncommitted changes"),
+            StoreError::Unauthorized => f.write_str("a valid device token is required"),
             StoreError::ImportRejected(issues) => {
                 write!(f, "the import was refused ({} problems)", issues.len())
             }
