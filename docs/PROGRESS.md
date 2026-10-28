@@ -56,3 +56,6 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 - Binary SHA-256 at install: `5089727028c5499fd461868c403b2e372e4269285e5bc5f15d29cd688f944f97`.
 - Known gaps: `/health` is unauthenticated (login comes in a later turn); no idle timeouts after the TLS handshake.
 - Listening sockets from the network: 22, 9090 (Cockpit), 8443 only; LLM and LanguageTool stay on loopback.
+
+### Backlog
+- Optional GPU benchmark for the local LLM (Intel HD 630 via Vulkan, NVIDIA 940MX via CUDA) against the CPU baseline, to run after turn 1 is merged: [issue #11](https://github.com/Olmer1st/pero/issues/11). Owner agreed.
