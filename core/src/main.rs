@@ -6,12 +6,16 @@ mod check;
 mod config;
 mod db;
 mod git;
+mod graph;
+mod graph_api;
 mod health;
 mod http_probe;
 mod ids;
 mod import;
 mod manuscript;
 mod store;
+#[cfg(test)]
+mod testkit;
 mod tls;
 
 use std::process::ExitCode;

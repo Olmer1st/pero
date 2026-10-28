@@ -6,6 +6,9 @@ const ALPHABET: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 pub const BOOK: &str = "bk";
 pub const CHAPTER: &str = "ch";
 pub const SCENE: &str = "sc";
+pub const ENTITY: &str = "en";
+pub const RELATIONSHIP: &str = "rl";
+pub const EVENT: &str = "ev";
 
 /// A fresh 8-character code. Randomness comes from the operating system.
 pub fn code() -> String {

@@ -82,9 +82,34 @@ Normalisation (import and the check): CR/LF and BOM to LF, trailing spaces remov
 
 Speed: about 0.4 ms per passage (2000 passages in 1.7 s; the per-passage ID check and the index rebuild dominate); a 10 000-paragraph novel imports in a few seconds.
 
+## Story graph API (part 4)
+SQLite only, no Git: the graph is authored structure kept in the database (back it up with the database). Everything is scoped to one book; an entity, scene or place from another book is refused. Bodies are strict: unknown fields are a 422.
+
+| Method and path | Purpose |
+|---|---|
+| `POST /books/{id}/entities` | create `{kind, name, description?, aliases?}`; `kind` is `character`, `place` or `organization` |
+| `GET /books/{id}/entities[?kind=]` | list, ordered by kind then name ignoring case (Cyrillic too) |
+| `GET`, `PATCH`, `DELETE /entities/{id}` | read; change `{name?, description?, aliases?}` (aliases are replaced as a whole; the kind never changes); delete `[?cascade=true]` |
+| `POST /books/{id}/relationships` | create `{from_entity_id, to_entity_id, kind, directed?, description?}` (`directed` defaults to true) |
+| `GET /books/{id}/relationships[?entity=]` | list; with `entity`, those touching it at either end |
+| `GET`, `PATCH`, `DELETE /relationships/{id}` | read; change `{kind?, directed?, description?}` (the two entities never change: delete and create instead); delete |
+| `POST /books/{id}/events` | create `{title, description?, when_text?, sort_order?, scene_id?, place_id?, participants?: [{entity_id, role?}]}` |
+| `GET /books/{id}/events[?entity=]` | list in timeline order (`sort_order`, then id); with `entity`, those it takes part in |
+| `GET`, `PATCH`, `DELETE /events/{id}` | read; change any field (absent keeps, `null` clears `when_text`, `scene_id`, `place_id`; `participants` replaces the list); delete |
+
+Rules:
+- **Entities:** name 1 to 300 characters on one line; description up to 5000 characters (line breaks allowed); up to 50 aliases, each 1 to 300 characters, different from each other and from the name. Two entities may share a name (two characters called Anna are legitimate).
+- **Relationships:** two different entities of the book; `kind` is free text up to 100 characters ("sister of", "serves in"). The same relationship twice is refused with 409 `already_exists`: same pair, same kind, same direction, and an undirected one counts in both directions. "A loves B" and "B loves A" are two different directed relationships and are both allowed.
+- **Events:** `when_text` is the date as the author writes it (fictional calendars are fine); `sort_order` is the author's order on the timeline, defaulting to 10 after the last event of the book; `place_id` must be a place; `scene_id` a scene of the same book; each participant at most once, up to 200, role up to 100 characters.
+- **Deleting an entity** that is still used (relationships, event participations, event places) is refused with 409 `in_use`; with `?cascade=true` its relationships and participations are removed and place references cleared. Canon facts about an entity always block the deletion, cascade or not (the author decides about canon first, part 5).
+- Deleting a relationship or an event never affects anything else; an event's participations go with it.
+- Query strings accept only plain ASCII values (kinds, IDs, `true`/`false`) and only the documented keys; there is no server-side name search (the client filters the list; books are small).
+- Text is stored exactly as sent: no Unicode normalisation, «ёлочки», dashes, «ё» and NBSP survive.
+
 ## Known gaps in this part
 - Import supports only the rules above (one file per chapter, `#`/`##` headings, plain paragraphs). Block quotes, lists, tables, images and deeper headings are kept as paragraph text if they sit inside a paragraph, but a line that starts a block with `#` is refused. Whether the owner's real chapters fit is decided by running `check-import` on them.
 - Import creates a new book each time; importing again into an existing book is not supported.
+- The story graph has no edit history or undo; it changes in place.
 - Deleting chapters, scenes or books is not implemented; a file deleted by hand leaves a stale index row until the delete operation exists.
 - A paragraph moves between scenes in two saves (remove, then claim), not atomically.
 - The index is rebuilt for the whole book after each change; fine for novel-sized books, to be optimised if it shows.

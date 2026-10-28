@@ -40,15 +40,21 @@ pub enum StoreError {
     Dirty,
     /// The files to import were not understood; nothing was imported.
     ImportRejected(Vec<Issue>),
+    /// The same thing already exists.
+    Exists(String),
+    /// Something else still depends on it, so it cannot be deleted.
+    InUse(String),
     Internal(String),
 }
 
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StoreError::NotFound(m) | StoreError::Invalid(m) | StoreError::Internal(m) => {
-                f.write_str(m)
-            }
+            StoreError::NotFound(m)
+            | StoreError::Invalid(m)
+            | StoreError::Exists(m)
+            | StoreError::InUse(m)
+            | StoreError::Internal(m) => f.write_str(m),
             StoreError::Conflict(_) => f.write_str("the scene changed since it was read"),
             StoreError::Dirty => f.write_str("the book repository has uncommitted changes"),
             StoreError::ImportRejected(issues) => {
@@ -345,6 +351,11 @@ impl Store {
             root,
             locks: Default::default(),
         }))
+    }
+
+    /// The SQLite pool, for the story graph and the canon ledger (database only, no Git).
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
     fn book_dir(&self, book_id: &str) -> Result<PathBuf, StoreError> {

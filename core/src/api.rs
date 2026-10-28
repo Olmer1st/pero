@@ -23,7 +23,7 @@ use crate::{
 };
 
 type Shared = Arc<Store>;
-type ApiResult<T> = Result<T, ApiError>;
+pub(crate) type ApiResult<T> = Result<T, ApiError>;
 
 /// Who made the change, as recorded in Git. Becomes the device name once devices exist.
 const ACTOR: &str = "api";
@@ -31,7 +31,7 @@ const ACTOR: &str = "api";
 /// Largest import request (a whole manuscript as JSON).
 const IMPORT_LIMIT: usize = 16 * 1024 * 1024;
 
-pub struct ApiError(StoreError);
+pub struct ApiError(pub(crate) StoreError);
 
 impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
@@ -66,6 +66,8 @@ impl IntoResponse for ApiError {
                     .collect();
                 (StatusCode::UNPROCESSABLE_ENTITY, body)
             }
+            StoreError::Exists(m) => (StatusCode::CONFLICT, error_body("already_exists", m)),
+            StoreError::InUse(m) => (StatusCode::CONFLICT, error_body("in_use", m)),
             StoreError::Conflict(current) => {
                 let mut body =
                     error_body("revision_conflict", "the scene changed since it was read");
@@ -262,6 +264,7 @@ async fn save_scene(
 }
 
 pub fn router(store: Arc<Store>) -> Router {
+    let graph = crate::graph_api::router(store.clone());
     Router::new()
         .route("/api/v1/books", get(list_books).post(create_book))
         .route(
@@ -287,58 +290,13 @@ pub fn router(store: Arc<Store>) -> Router {
         .route("/api/v1/chapters/{id}/scenes/order", put(reorder_scenes))
         .route("/api/v1/scenes/{id}", get(get_scene).put(save_scene))
         .with_state(store)
+        .merge(graph)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
-    use axum::{body::Body, http::Request};
-    use tower::ServiceExt;
-
-    struct Server {
-        app: Router,
-        dir: std::path::PathBuf,
-    }
-
-    impl Server {
-        async fn new(tag: &str) -> Server {
-            let dir =
-                std::env::temp_dir().join(format!("pero-api-test-{}-{tag}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            let pool = db::open(&dir.join("pero.db")).await.unwrap();
-            let store = Store::new(pool, dir.join("books")).unwrap();
-            Server {
-                app: router(store),
-                dir,
-            }
-        }
-
-        async fn call(&self, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
-            let req = Request::builder()
-                .method(method)
-                .uri(uri)
-                .header("content-type", "application/json")
-                .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
-                .unwrap();
-            let res = self.app.clone().oneshot(req).await.unwrap();
-            let status = res.status();
-            let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
-                .await
-                .unwrap();
-            (
-                status,
-                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-            )
-        }
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
-    }
+    use crate::testkit::Server;
 
     #[tokio::test]
     async fn a_book_can_be_written_and_read_through_the_api() {
