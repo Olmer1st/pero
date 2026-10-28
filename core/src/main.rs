@@ -2,6 +2,7 @@
 //! llama.cpp and LanguageTool stay on 127.0.0.1; this server only asks them whether they are alive.
 
 mod config;
+mod db;
 mod health;
 mod http_probe;
 mod tls;
