@@ -853,3 +853,238 @@ async fn unknown_or_malformed_ids_are_not_found() {
     ));
     assert!(env.store.read_scene(&scene.info.id).await.is_ok());
 }
+
+fn md(name: &str, content: &str) -> ImportFile {
+    ImportFile {
+        name: name.into(),
+        content: content.into(),
+    }
+}
+
+const CHAPTER_1: &str = "# Глава первая\n\n## Утро\n\nНад Доном вставало солнце — холодное, чужое.\n\n— Ну что, казак, — сказал он, — поедем?\n\n* * *\n\n«Ёлочки» и ёж.\nВторая строка абзаца.\n\n## Вечер\n\n„Лапки“ и… многоточие.\n";
+const CHAPTER_2: &str = "# Глава вторая\n\nОдна сцена без заголовка.\n\n— Да.\n— Нет.\n";
+
+#[tokio::test]
+async fn an_imported_manuscript_is_one_commit_with_stable_ids_everywhere() {
+    let env = Env::new().await;
+    let files = [md("02.md", CHAPTER_2), md("01.md", CHAPTER_1)];
+    let summary = env
+        .store
+        .import_book(
+            "Тихий Дон",
+            "ru",
+            ParagraphMode::BlankLine,
+            &files,
+            "tester",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (summary.chapters, summary.scenes, summary.passages),
+        (2, 4, 6)
+    );
+    assert!(summary.titles_from_filename.is_empty());
+    let repo = env.repo(&summary.book);
+    assert_eq!(
+        git::log_messages(&repo),
+        ["tester|Import book: Тихий Дон (2 chapters)"]
+    );
+    assert!(git::is_clean(&repo, "tester").unwrap());
+
+    let chapters = env.store.list_chapters(&summary.book.id).await.unwrap();
+    assert_eq!(
+        chapters
+            .iter()
+            .map(|c| c.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Глава первая", "Глава вторая"]
+    );
+    let scenes = env.store.list_scenes(&chapters[0].id).await.unwrap();
+    assert_eq!(
+        scenes.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+        ["Утро", "", "Вечер"]
+    );
+    assert!(
+        repo.join("chapters/001-glava-pervaya/001-utro.md")
+            .is_file()
+    );
+    assert!(
+        repo.join("chapters/001-glava-pervaya/002-scene.md")
+            .is_file()
+    );
+
+    let first = env.store.read_scene(&scenes[0].id).await.unwrap();
+    assert_eq!(
+        texts_of(&first),
+        [
+            "Над Доном вставало солнце — холодное, чужое.",
+            "— Ну что, казак, — сказал он, — поедем?"
+        ]
+    );
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM passages WHERE book_id = ? AND status = 'active'")
+            .bind(&summary.book.id)
+            .fetch_one(&env.store.pool)
+            .await
+            .unwrap();
+    let (distinct,): (i64,) =
+        sqlx::query_as("SELECT count(DISTINCT id) FROM passages WHERE book_id = ?")
+            .bind(&summary.book.id)
+            .fetch_one(&env.store.pool)
+            .await
+            .unwrap();
+    assert_eq!((count, distinct), (6, 6));
+}
+
+#[tokio::test]
+async fn import_then_export_is_byte_identical_to_the_normalised_original() {
+    let env = Env::new().await;
+    let messy_2 = CHAPTER_2.replace('\n', "\r\n") + "\r\n\r\n\r\n";
+    let files = [md("01.md", CHAPTER_1), md("02.md", &messy_2)];
+    let summary = env
+        .store
+        .import_book("Книга", "ru", ParagraphMode::BlankLine, &files, "tester")
+        .await
+        .unwrap();
+    let exported = env.store.export_book(&summary.book.id).await.unwrap();
+    assert_eq!(exported.len(), 2);
+    assert_eq!(exported[0].content, CHAPTER_1);
+    assert_eq!(exported[1].content, import::normalize_markdown(&messy_2));
+    for (original, out) in files.iter().zip(&exported) {
+        let check = import::check_file(original, &out.content, None);
+        assert!(check.same_text && check.canonical, "{check:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_refused_import_leaves_no_book_behind() {
+    let env = Env::new().await;
+    let files = [
+        md("01.md", CHAPTER_1),
+        md("02.md", "# Г\n\nтекст\n\n### нельзя\n"),
+    ];
+    match env
+        .store
+        .import_book("Книга", "ru", ParagraphMode::BlankLine, &files, "tester")
+        .await
+    {
+        Err(StoreError::ImportRejected(issues)) => {
+            assert_eq!((issues[0].file.as_str(), issues[0].line), ("02.md", 5));
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(env.store.list_books().await.unwrap().is_empty());
+    assert_eq!(fs::read_dir(env.dir.join("books")).unwrap().count(), 0);
+    let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM passages")
+        .fetch_one(&env.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    assert!(
+        env.store
+            .import_book("", "ru", ParagraphMode::BlankLine, &files[..1], "t")
+            .await
+            .is_err()
+    );
+    assert!(
+        env.store
+            .import_book("К", "xx", ParagraphMode::BlankLine, &files[..1], "t")
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn an_imported_book_can_be_edited_and_keeps_its_ids() {
+    let env = Env::new().await;
+    let summary = env
+        .store
+        .import_book(
+            "Книга",
+            "ru",
+            ParagraphMode::BlankLine,
+            &[md("01.md", CHAPTER_2)],
+            "tester",
+        )
+        .await
+        .unwrap();
+    let chapter = env
+        .store
+        .list_chapters(&summary.book.id)
+        .await
+        .unwrap()
+        .remove(0);
+    let info = env.store.list_scenes(&chapter.id).await.unwrap().remove(0);
+    let scene = env.store.read_scene(&info.id).await.unwrap();
+    let ids = ids_of(&scene);
+    let edited = "Одна сцена, теперь с правкой.";
+    let req = save(
+        &scene,
+        &[(Some(&ids[0]), edited), (Some(&ids[1]), "— Да.\n— Нет.")],
+    );
+    let saved = env
+        .store
+        .save_scene(&info.id, &req, "tester")
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&saved.scene), ids);
+    assert_eq!(env.commits(&summary.book), 2);
+}
+
+#[tokio::test]
+async fn single_line_paragraph_mode_gives_one_passage_per_line() {
+    let env = Env::new().await;
+    let text = "# Глава\n\n— Привет, — сказал он.\n— Привет.\n— Как дела?\n";
+    let blank = env
+        .store
+        .import_book(
+            "А",
+            "ru",
+            ParagraphMode::BlankLine,
+            &[md("a.md", text)],
+            "t",
+        )
+        .await
+        .unwrap();
+    let line = env
+        .store
+        .import_book("Б", "ru", ParagraphMode::Line, &[md("a.md", text)], "t")
+        .await
+        .unwrap();
+    assert_eq!((blank.passages, line.passages), (1, 3));
+}
+
+#[tokio::test]
+async fn a_large_manuscript_imports_in_one_go() {
+    let env = Env::new().await;
+    let paragraph =
+        "Над Доном вставало солнце — холодное, чужое, и казаки, не торопясь, седлали коней.";
+    let files: Vec<ImportFile> = (1..=20)
+        .map(|c| {
+            let scenes: String = (1..=10)
+                .map(|s| format!("## Сцена {s}\n\n{}", format!("{paragraph}\n\n").repeat(10)))
+                .collect();
+            md(&format!("{c:02}.md"), &format!("# Глава {c}\n\n{scenes}"))
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let summary = env
+        .store
+        .import_book("Большая", "ru", ParagraphMode::BlankLine, &files, "tester")
+        .await
+        .unwrap();
+    eprintln!(
+        "imported {} passages in {:?}",
+        summary.passages,
+        started.elapsed()
+    );
+    assert_eq!(
+        (summary.chapters, summary.scenes, summary.passages),
+        (20, 200, 2000)
+    );
+    assert_eq!(env.commits(&summary.book), 1);
+    let exported = env.store.export_book(&summary.book.id).await.unwrap();
+    for (original, out) in files.iter().zip(&exported) {
+        assert!(import::check_file(original, &out.content, None).canonical);
+    }
+}

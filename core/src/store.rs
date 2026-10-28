@@ -24,6 +24,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::{
     git, ids,
+    import::{self, ImportFile, Issue, ParagraphMode},
     manuscript::{self, Passage, SceneMeta},
 };
 
@@ -37,6 +38,8 @@ pub enum StoreError {
     Conflict(Box<Scene>),
     /// The repository has uncommitted changes, so no further change is made until the owner looks.
     Dirty,
+    /// The files to import were not understood; nothing was imported.
+    ImportRejected(Vec<Issue>),
     Internal(String),
 }
 
@@ -48,6 +51,9 @@ impl std::fmt::Display for StoreError {
             }
             StoreError::Conflict(_) => f.write_str("the scene changed since it was read"),
             StoreError::Dirty => f.write_str("the book repository has uncommitted changes"),
+            StoreError::ImportRejected(issues) => {
+                write!(f, "the import was refused ({} problems)", issues.len())
+            }
         }
     }
 }
@@ -163,6 +169,26 @@ pub struct Saved {
     pub scene: Scene,
     /// The new commit, or `None` when the save changed nothing.
     pub commit: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportSummary {
+    pub book: Book,
+    pub chapters: usize,
+    pub scenes: usize,
+    pub passages: usize,
+    /// Files that had no `# ` heading, so the chapter title was made from the file name.
+    pub titles_from_filename: Vec<String>,
+}
+
+/// A chapter written back out as Markdown.
+#[derive(Debug, Serialize)]
+pub struct ExportFile {
+    pub name: String,
+    pub content: String,
+    /// True when the chapter title is the one the import made up from a file name.
+    #[serde(skip)]
+    pub title: String,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -588,6 +614,172 @@ impl Store {
         .await?;
         self.sync(id, &[]).await?;
         self.get_book(id).await
+    }
+
+    // ---- import and export -------------------------------------------------------------------
+
+    /// Creates a book from a set of Markdown chapter files (one file per chapter) as ONE commit.
+    /// Either everything is understood and imported, or nothing is (`ImportRejected` lists why).
+    pub async fn import_book(
+        &self,
+        title: &str,
+        language: &str,
+        mode: ParagraphMode,
+        files: &[ImportFile],
+        actor: &str,
+    ) -> Result<ImportSummary, StoreError> {
+        let title = non_empty("title", title)?;
+        if !manuscript::valid_language(language) {
+            return Err(invalid("language must be \"ru\" or \"en\""));
+        }
+        let parsed = import::parse_files(files, mode).map_err(StoreError::ImportRejected)?;
+
+        let book_id = ids::new_id(ids::BOOK);
+        let dir = self.book_dir(&book_id)?;
+        let _guard = self.lock(&book_id).await;
+
+        // Plan every file first (IDs included), so the blocking part only writes.
+        struct PlannedScene {
+            file: String,
+            content: String,
+        }
+        struct PlannedChapter {
+            dir: String,
+            toml: String,
+            scenes: Vec<PlannedScene>,
+        }
+        let mut used: HashSet<String> = HashSet::new();
+        let (mut scene_count, mut passage_count) = (0, 0);
+        let mut plan: Vec<PlannedChapter> = Vec::new();
+        for (ci, ch) in parsed.iter().enumerate() {
+            let chapter_file = ChapterFile {
+                id: ids::new_id(ids::CHAPTER),
+                title: ch.title.clone(),
+            };
+            let mut scenes = Vec::new();
+            for (si, sc) in ch.scenes.iter().enumerate() {
+                let meta = SceneMeta {
+                    id: ids::new_id(ids::SCENE),
+                    title: sc.title.clone(),
+                    language: language.to_string(),
+                    pov: None,
+                    date: None,
+                    location: None,
+                };
+                let mut pairs = Vec::with_capacity(sc.paragraphs.len());
+                for text in &sc.paragraphs {
+                    pairs.push((self.fresh_passage_id(&mut used).await?, text.clone()));
+                }
+                passage_count += pairs.len();
+                scene_count += 1;
+                scenes.push(PlannedScene {
+                    file: format!(
+                        "{:03}-{}.md",
+                        si + 1,
+                        manuscript::slugify(&sc.title, "scene")
+                    ),
+                    content: manuscript::render_scene(&meta, &pairs).map_err(internal)?,
+                });
+            }
+            plan.push(PlannedChapter {
+                dir: format!(
+                    "{:03}-{}",
+                    ci + 1,
+                    manuscript::slugify(&ch.title, "chapter")
+                ),
+                toml: toml::to_string(&chapter_file).map_err(internal)?,
+                scenes,
+            });
+        }
+
+        let book_file = BookFile {
+            id: book_id.clone(),
+            title: title.clone(),
+            language: language.to_string(),
+        };
+        let message = format!("Import book: {title} ({} chapters)", plan.len());
+        let (d, a) = (dir.clone(), actor.to_string());
+        let written = blocking(move || -> Result<(), String> {
+            fs::create_dir_all(d.join("chapters")).map_err(|e| e.to_string())?;
+            write_atomic(
+                &d.join("book.toml"),
+                &toml::to_string(&book_file).map_err(|e| e.to_string())?,
+            )?;
+            for ch in &plan {
+                let cdir = d.join("chapters").join(&ch.dir);
+                fs::create_dir_all(&cdir).map_err(|e| e.to_string())?;
+                write_atomic(&cdir.join("chapter.toml"), &ch.toml)?;
+                for sc in &ch.scenes {
+                    write_atomic(&cdir.join(&sc.file), &sc.content)?;
+                }
+            }
+            git::init(&d, &a)?;
+            git::commit_all(&d, &a, &message)?;
+            Ok(())
+        })
+        .await?;
+        if let Err(e) = written {
+            let _ = fs::remove_dir_all(&dir);
+            return Err(internal(e));
+        }
+        if let Err(e) = self.sync(&book_id, &[]).await {
+            let _ = fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+        Ok(ImportSummary {
+            book: self.get_book(&book_id).await?,
+            chapters: parsed.len(),
+            scenes: scene_count,
+            passages: passage_count,
+            titles_from_filename: parsed
+                .iter()
+                .filter(|c| c.title_from_filename)
+                .map(|c| c.file.clone())
+                .collect(),
+        })
+    }
+
+    async fn fresh_passage_id(&self, used: &mut HashSet<String>) -> Result<String, StoreError> {
+        loop {
+            let candidate = ids::code();
+            let taken: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM passages WHERE id = ?")
+                .bind(&candidate)
+                .fetch_optional(&self.pool)
+                .await?;
+            if taken.is_none() && used.insert(candidate.clone()) {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    /// Every chapter of the book as canonical Markdown (headings, scene breaks, plain paragraphs).
+    pub async fn export_book(&self, book_id: &str) -> Result<Vec<ExportFile>, StoreError> {
+        self.get_book(book_id).await?;
+        let dir = self.book_dir(book_id)?;
+        let _guard = self.lock(book_id).await;
+        let (_, chapters) = blocking(move || read_snapshot(&dir))
+            .await?
+            .map_err(internal)?;
+        Ok(chapters
+            .iter()
+            .map(|ch| {
+                let scenes: Vec<(String, Vec<String>)> = ch
+                    .scenes
+                    .iter()
+                    .map(|sc| {
+                        (
+                            sc.meta.title.clone(),
+                            sc.passages.iter().map(|p| p.text.clone()).collect(),
+                        )
+                    })
+                    .collect();
+                ExportFile {
+                    name: format!("{}.md", ch.dir),
+                    content: import::export_chapter(&ch.meta.title, &scenes),
+                    title: ch.meta.title.clone(),
+                }
+            })
+            .collect())
     }
 
     // ---- chapters ----------------------------------------------------------------------------

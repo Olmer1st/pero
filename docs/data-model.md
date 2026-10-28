@@ -55,11 +55,36 @@ books/<book-id>/
 | `PUT /chapters/{id}/scenes/order` | `{ids}` |
 | `GET /scenes/{id}` | scene with `passages` `[{id, text}]` and `revision` |
 | `PUT /scenes/{id}` | save `{base_revision, fields, passages: [{id?, text}], merged?: [{from, into}]}` → `{scene, commit}` |
+| `POST /books/import` | import `{title, language, mode?, files: [{name, content}]}` as one commit (up to 16 MiB); 201 with `{book, chapters, scenes, passages, titles_from_filename}` |
+| `GET /books/{id}/export` | every chapter as canonical Markdown `{files: [{name, content}]}` |
 | `POST /books/{id}/reindex` | rebuild the index |
 
-Errors are `{"error": {"code", "message"}}`: 404 `not_found`, 422 `invalid` (also for unknown fields), 409 `revision_conflict` (with `current`) or `repository_dirty`, 500 `internal` (details only in the server log). Malformed JSON gets axum's plain-text 4xx.
+Errors are `{"error": {"code", "message"}}`: 404 `not_found`, 422 `invalid` (also for unknown fields) or `import_rejected` (with `issues: [{file, line, message}]`), 409 `revision_conflict` (with `current`) or `repository_dirty`, 500 `internal` (details only in the server log). Malformed JSON gets axum's plain-text 4xx.
+
+## Import (part 3)
+One Markdown file is one chapter; the files are read in natural name order (`2.md` before `10.md`) and become one new book in **one commit**. Either every file is understood or nothing is imported: the refusal lists up to 50 problems as file, line and message (never the text itself).
+
+| In the file | Becomes |
+|---|---|
+| `# Title` (first in the file) | chapter title; without it, the title is made from the file name (leading digits and `_`/`-` dropped) and the file is listed in `titles_from_filename` |
+| `## Title` | a scene with that title |
+| `* * *`, `***`, `---`, `___` (blank lines around) | a scene break: the next paragraphs start an untitled scene. Breaks with no text before them are ignored |
+| any other text | passages. `mode = "blank_line"` (default): a paragraph is a block of lines between blank lines. `mode = "line"`: every non-empty line is a passage (for text exported from word processors, where paragraphs are single lines) |
+| `###` or other `#` forms, a heading or break glued to text without blank lines, a second `# ` heading, a passage marker inside the text, an empty heading | refused, with file and line |
+
+Normalisation (import and the check): CR/LF and BOM to LF, trailing spaces removed, runs of blank lines collapsed, scene-break spellings to `* * *`, one final newline. **Words, punctuation and Unicode are never changed** (no NFC, «ёлочки», dashes and «ё» untouched).
+
+**Round trip and the check.** `GET /books/{id}/export` writes each chapter back as canonical Markdown: `# Title`, `## Scene title` for titled scenes, `* * *` between untitled ones, paragraphs separated by blank lines. Two levels of proof:
+1. *No text lost* (must pass): the characters of the original, ignoring whitespace, scene-break lines and heading marks, are identical to those of the export. This catches any dropped, duplicated, reordered or altered word and is independent of the splitting rules.
+2. *Byte-identical to the normalised original* (reported): true for files that already follow the rules above. A file can differ only in notation (for example consecutive breaks, a break right before a `##` heading, single-line paragraphs in `line` mode); the report says which file and the first differing line.
+
+**Checking your own chapters offline.** `pero-server check-import DIR [--mode blank-line|line] [--language ru|en]` imports the `*.md` files of DIR into a throw-away store, exports them again and prints the counts and both results. It prints only counts, file names and line numbers, never text, and removes its temporary folder; exit status 1 on a refusal or if any text differs. It also says when many paragraphs span 8 or more lines (a sign that `--mode line` is needed).
+
+Speed: about 0.4 ms per passage (2000 passages in 1.7 s; the per-passage ID check and the index rebuild dominate); a 10 000-paragraph novel imports in a few seconds.
 
 ## Known gaps in this part
+- Import supports only the rules above (one file per chapter, `#`/`##` headings, plain paragraphs). Block quotes, lists, tables, images and deeper headings are kept as paragraph text if they sit inside a paragraph, but a line that starts a block with `#` is refused. Whether the owner's real chapters fit is decided by running `check-import` on them.
+- Import creates a new book each time; importing again into an existing book is not supported.
 - Deleting chapters, scenes or books is not implemented; a file deleted by hand leaves a stale index row until the delete operation exists.
 - A paragraph moves between scenes in two saves (remove, then claim), not atomically.
 - The index is rebuilt for the whole book after each change; fine for novel-sized books, to be optimised if it shows.

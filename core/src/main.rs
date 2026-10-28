@@ -2,12 +2,14 @@
 //! llama.cpp and LanguageTool stay on 127.0.0.1; this server only asks them whether they are alive.
 
 mod api;
+mod check;
 mod config;
 mod db;
 mod git;
 mod health;
 mod http_probe;
 mod ids;
+mod import;
 mod manuscript;
 mod store;
 mod tls;
@@ -16,16 +18,55 @@ use std::process::ExitCode;
 
 const DEFAULT_CONFIG: &str = "/etc/pero/server.toml";
 
-fn config_path() -> Result<String, String> {
-    let mut args = std::env::args().skip(1);
-    match (args.next().as_deref(), args.next()) {
-        (None, _) => Ok(DEFAULT_CONFIG.to_string()),
-        (Some("--config"), Some(path)) => Ok(path),
-        (Some("--version"), _) => {
+const USAGE: &str = "usage: pero-server [--config PATH] | --version\n       pero-server check-import DIR [--mode blank-line|line] [--language ru|en]";
+
+enum Command {
+    Serve {
+        config: String,
+    },
+    CheckImport {
+        dir: String,
+        mode: import::ParagraphMode,
+        language: String,
+    },
+}
+
+fn parse_args() -> Result<Command, String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => Ok(Command::Serve {
+            config: DEFAULT_CONFIG.to_string(),
+        }),
+        Some("--version") => {
             println!("pero-server {}", env!("CARGO_PKG_VERSION"));
             Err(String::new())
         }
-        _ => Err("usage: pero-server [--config PATH] | --version".to_string()),
+        Some("--config") if args.len() == 2 => Ok(Command::Serve {
+            config: args[1].clone(),
+        }),
+        Some("check-import") => {
+            let dir = args
+                .get(1)
+                .filter(|a| !a.starts_with("--"))
+                .ok_or(USAGE)?
+                .clone();
+            let (mut mode, mut language) = (import::ParagraphMode::BlankLine, "ru".to_string());
+            let mut rest = args[2..].iter();
+            while let Some(flag) = rest.next() {
+                match (flag.as_str(), rest.next().map(String::as_str)) {
+                    ("--mode", Some("blank-line")) => mode = import::ParagraphMode::BlankLine,
+                    ("--mode", Some("line")) => mode = import::ParagraphMode::Line,
+                    ("--language", Some(l @ ("ru" | "en"))) => language = l.to_string(),
+                    _ => return Err(USAGE.to_string()),
+                }
+            }
+            Ok(Command::CheckImport {
+                dir,
+                mode,
+                language,
+            })
+        }
+        _ => Err(USAGE.to_string()),
     }
 }
 
@@ -38,8 +79,40 @@ async fn shutdown() {
     }
 }
 
+async fn check_import(
+    dir: &str,
+    mode: import::ParagraphMode,
+    language: &str,
+) -> Result<(), String> {
+    let files = check::read_folder(std::path::Path::new(dir))?;
+    match check::run_check(files, mode, language).await {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.passed() {
+                Ok(())
+            } else {
+                Err("the round trip changed some text".to_string())
+            }
+        }
+        Err(check::CheckError::Rejected(lines)) => {
+            for l in &lines {
+                eprintln!("{l}");
+            }
+            Err(format!("{} problem(s): nothing was imported", lines.len()))
+        }
+        Err(check::CheckError::Failed(e)) => Err(e),
+    }
+}
+
 async fn run() -> Result<(), String> {
-    let path = config_path()?;
+    let path = match parse_args()? {
+        Command::Serve { config } => config,
+        Command::CheckImport {
+            dir,
+            mode,
+            language,
+        } => return check_import(&dir, mode, &language).await,
+    };
     let cfg = config::Config::load(&path)?;
     let tls = tls::load_config(&cfg.tls_cert, &cfg.tls_key)?;
     let listener = tls::TlsListener::bind(cfg.bind, tls)

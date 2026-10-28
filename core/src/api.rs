@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -14,8 +14,12 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::store::{
-    Book, Chapter, SaveScene, Saved, Scene, SceneFields, SceneInfo, Store, StoreError,
+use crate::{
+    import::{ImportFile, ParagraphMode},
+    store::{
+        Book, Chapter, ExportFile, ImportSummary, SaveScene, Saved, Scene, SceneFields, SceneInfo,
+        Store, StoreError,
+    },
 };
 
 type Shared = Arc<Store>;
@@ -23,6 +27,9 @@ type ApiResult<T> = Result<T, ApiError>;
 
 /// Who made the change, as recorded in Git. Becomes the device name once devices exist.
 const ACTOR: &str = "api";
+
+/// Largest import request (a whole manuscript as JSON).
+const IMPORT_LIMIT: usize = 16 * 1024 * 1024;
 
 pub struct ApiError(StoreError);
 
@@ -48,6 +55,17 @@ impl IntoResponse for ApiError {
                     "the book repository has uncommitted changes; the owner must look at it",
                 ),
             ),
+            StoreError::ImportRejected(issues) => {
+                let mut body = error_body(
+                    "import_rejected",
+                    "the files were not understood; nothing was imported",
+                );
+                body["issues"] = issues
+                    .iter()
+                    .map(|i| json!({ "file": i.file, "line": i.line, "message": i.message }))
+                    .collect();
+                (StatusCode::UNPROCESSABLE_ENTITY, body)
+            }
             StoreError::Conflict(current) => {
                 let mut body =
                     error_body("revision_conflict", "the scene changed since it was read");
@@ -71,6 +89,16 @@ impl IntoResponse for ApiError {
 struct NewBook {
     title: String,
     language: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportRequest {
+    title: String,
+    language: String,
+    #[serde(default)]
+    mode: ParagraphMode,
+    files: Vec<ImportFile>,
 }
 
 #[derive(Deserialize)]
@@ -156,6 +184,21 @@ async fn reorder_chapters(
     Ok(Json(s.reorder_chapters(&id, &o.ids, ACTOR).await?))
 }
 
+async fn import_book(
+    State(s): State<Shared>,
+    Json(r): Json<ImportRequest>,
+) -> ApiResult<(StatusCode, Json<ImportSummary>)> {
+    let summary = s
+        .import_book(&r.title, &r.language, r.mode, &r.files, ACTOR)
+        .await?;
+    Ok((StatusCode::CREATED, Json(summary)))
+}
+
+async fn export_book(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let files: Vec<ExportFile> = s.export_book(&id).await?;
+    Ok(Json(json!({ "files": files })))
+}
+
 async fn reindex(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let report = s.reindex_book(&id).await?;
     Ok(Json(json!({ "unmarked_paragraphs": report.unmarked })))
@@ -221,7 +264,12 @@ async fn save_scene(
 pub fn router(store: Arc<Store>) -> Router {
     Router::new()
         .route("/api/v1/books", get(list_books).post(create_book))
+        .route(
+            "/api/v1/books/import",
+            post(import_book).layer(DefaultBodyLimit::max(IMPORT_LIMIT)),
+        )
         .route("/api/v1/books/{id}", get(get_book).patch(rename_book))
+        .route("/api/v1/books/{id}/export", get(export_book))
         .route(
             "/api/v1/books/{id}/chapters",
             get(list_chapters).post(create_chapter),
@@ -440,6 +488,71 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("blank line")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_manuscript_is_imported_and_exported_through_the_api() {
+        let s = Server::new("import").await;
+        let chapter = "# Глава первая\n\n## Утро\n\nНад Доном вставало солнце.\n\n* * *\n\n— Ну что, казак?\n";
+        let body = json!({"title": "Тихий Дон", "language": "ru", "files": [{"name": "01.md", "content": chapter}]});
+        let (st, summary) = s.call("POST", "/api/v1/books/import", Some(body)).await;
+        assert_eq!(st, StatusCode::CREATED, "{summary}");
+        assert_eq!(
+            (
+                summary["chapters"].as_i64(),
+                summary["scenes"].as_i64(),
+                summary["passages"].as_i64()
+            ),
+            (Some(1), Some(2), Some(2))
+        );
+        let id = summary["book"]["id"].as_str().unwrap();
+        let (st, out) = s
+            .call("GET", &format!("/api/v1/books/{id}/export"), None)
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(out["files"][0]["content"], chapter);
+        assert_eq!(out["files"][0]["name"], "001-glava-pervaya.md");
+
+        let bad = json!({"title": "X", "language": "ru", "files": [{"name": "a.md", "content": "# Г\n\n### нельзя\n"}]});
+        let (st, refused) = s.call("POST", "/api/v1/books/import", Some(bad)).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(refused["error"]["code"], "import_rejected");
+        assert_eq!(
+            (
+                refused["issues"][0]["file"].as_str(),
+                refused["issues"][0]["line"].as_i64()
+            ),
+            (Some("a.md"), Some(3))
+        );
+        let (_, books) = s.call("GET", "/api/v1/books", None).await;
+        assert_eq!(books.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn imports_above_the_default_body_limit_are_accepted() {
+        let s = Server::new("bigimport").await;
+        let paragraph = format!(
+            "{}\n\n",
+            "Над Доном вставало солнце — холодное, чужое. ".repeat(22)
+        )
+        .repeat(3_000); // about 3 MB
+        let body = json!({"title": "Большая", "language": "ru", "files": [{"name": "01.md", "content": format!("# Глава\n\n{paragraph}")}]});
+        assert!(body.to_string().len() > 2 * 1024 * 1024);
+        let (st, summary) = s.call("POST", "/api/v1/books/import", Some(body)).await;
+        assert_eq!(st, StatusCode::CREATED, "{summary}");
+        assert_eq!(summary["passages"], 3_000);
+        let (st, _) = s
+            .call(
+                "POST",
+                "/api/v1/books",
+                Some(json!({"title": "X".repeat(3_000_000), "language": "ru"})),
+            )
+            .await;
+        assert_eq!(
+            st,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "other routes keep the small default limit"
         );
     }
 
