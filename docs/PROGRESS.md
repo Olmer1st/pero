@@ -13,7 +13,7 @@ Status: in progress.
 | 5. llama.cpp and model benchmark | confirmed; owner picked Gemma 4 26B-A4B (`docs/benchmarks/llm-cpu.md`) |
 | 6. LLM service | confirmed; reboot test pending (owner, when near the server) |
 | 7. LanguageTool service | confirmed; reboot test pending together with part 6 |
-| 8. Rust server skeleton | code and scripts approved (private home CA); installation in progress |
+| 8. Rust server skeleton | installed and verified from the dev laptop; reboot test pending together with parts 6 and 7 |
 | 9. Security baseline report | pending |
 
 ### Setup notes
@@ -48,3 +48,11 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 - Check: `infra/scripts/part7/verify-from-client.sh pero-server`. Logs: `sudo journalctl -u pero-languagetool`.
 - Open: reboot test with part 6 (run both `verify-from-client.sh` scripts afterwards).
 - Both services run together: about 22 GB of memory stays available.
+
+### Pero server (part 8)
+- `pero-server` (Rust, axum + rustls) on `0.0.0.0:8443`, TLS 1.3 only, user `pero`, systemd sandbox score 1.7. Binary root-owned in `/opt/pero/server/<sha12>/` (`current` symlink); settings in `/etc/pero/server.toml`.
+- `GET /health` (no login yet): status, version, uptime and up/down with latency for the LLM and LanguageTool. Results cached 3 s.
+- Certificate: private home CA in `~/.pero-ca` on the dev laptop (name-constrained to `writer.local` and `10.0.0.0/24`, valid to 2031-10-27, SHA-256 fingerprint 62:D8:0E:4B:…:48:0E). The server certificate is valid to 2027-10-28: **renew it by 2027-09-28** (steps 2, 3 and 5 in `infra/scripts/part8/README.md`). Back up `~/.pero-ca` offline. The client imports `ca.crt` once.
+- Binary SHA-256 at install: `5089727028c5499fd461868c403b2e372e4269285e5bc5f15d29cd688f944f97`.
+- Known gaps: `/health` is unauthenticated (login comes in a later turn); no idle timeouts after the TLS handshake.
+- Listening sockets from the network: 22, 9090 (Cockpit), 8443 only; LLM and LanguageTool stay on loopback.
