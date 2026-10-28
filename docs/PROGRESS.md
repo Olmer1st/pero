@@ -12,8 +12,8 @@ Status: in progress.
 | 4. Toolchains | confirmed |
 | 5. llama.cpp and model benchmark | confirmed; owner picked Gemma 4 26B-A4B (`docs/benchmarks/llm-cpu.md`) |
 | 6. LLM service | confirmed; reboot test pending (owner, when near the server) |
-| 7. LanguageTool service | installed and verified from the dev laptop; reboot test pending together with part 6 |
-| 8. Rust server skeleton | pending |
+| 7. LanguageTool service | confirmed; reboot test pending together with part 6 |
+| 8. Rust server skeleton | code and scripts approved (private home CA); installation in progress |
 | 9. Security baseline report | pending |
 
 ### Setup notes
