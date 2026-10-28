@@ -38,5 +38,5 @@ Revisit only if the hardware or model changes (a bigger or newer GPU, a much sma
 ## Rollback of the phase 1 installation
 - Server, with the owner's own sudo: `sudo apt-get remove --purge --autoremove mesa-vulkan-drivers vulkan-tools libvulkan-dev glslc spirv-headers`.
 - Server, normal user: `rm -rf ~/pero-bench/llama.cpp/build-vulkan`; with sudo: `rm -rf /var/tmp/pero-gpu-bench`.
-- The sudo grant: `sudo rm /etc/sudoers.d/pero-pero-gpu1` on the server.
+- The sudo grant: `sudo rm /etc/sudoers.d/pero-pero-gpu1` on the server. Removed by the owner and verified on 2026-10-28 (`sudo -n -l` asks for a password; `/etc/sudoers.d` holds only the stock README). The first attempt was run on the wrong machine and left the grant in place.
 - The part 5 CPU build and the `pero-llm` service were never changed.
