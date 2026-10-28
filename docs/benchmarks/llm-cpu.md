@@ -1,6 +1,6 @@
 # LLM on CPU: model benchmark (part 5)
 
-Server: Dell Latitude 5580, Intel Core i7-7820HQ (4 cores / 8 threads, AVX2, no AVX-512), 31 GiB RAM, no GPU.
+Server: Dell Latitude 5580, Intel Core i7-7820HQ (4 cores / 8 threads, AVX2, no AVX-512), 31 GiB RAM, CPU only in these runs. The machine also has an unused NVIDIA GeForce 940MX (Maxwell, nouveau driver) and the Intel HD 630; neither was tested (see DECISIONS).
 llama.cpp tag `b11796` (commit `0a1ef30`), built with `GGML_NATIVE`, gcc 14.2. Scripts: `infra/scripts/part5/`. Measured 2026-10-27.
 All three are mixture-of-experts models, Apache-2.0, files verified against the SHA-256 published by Hugging Face.
 
