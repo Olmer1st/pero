@@ -1,7 +1,7 @@
 # Progress
 
 ## Turn 1 — server bootstrap
-Status: in progress.
+Status: all nine parts done and checked; reboot test (parts 6–8) and lid-close test (part 2) pending on the owner's physical access. One pull request for the turn awaits the owner's merge.
 
 | Part | Status |
 |---|---|
@@ -14,7 +14,7 @@ Status: in progress.
 | 6. LLM service | confirmed; reboot test pending (owner, when near the server) |
 | 7. LanguageTool service | confirmed; reboot test pending together with part 6 |
 | 8. Rust server skeleton | installed and verified from the dev laptop; reboot test pending together with parts 6 and 7 |
-| 9. Security baseline report | pending |
+| 9. Security baseline report | `docs/security/baseline.md`; only 22, 8443 and 9090 answer from the network (Cockpit 9090 is an accepted exception) |
 
 ### Setup notes
 - Enable the secret-scanning hook after cloning: `infra/scripts/install-hooks.sh` (needs `gitleaks` on PATH).
@@ -59,3 +59,27 @@ Policy file: `deny.toml` (permissive licenses only, crates.io only, yanked crate
 
 ### Backlog
 - Optional GPU benchmark for the local LLM (Intel HD 630 via Vulkan, NVIDIA 940MX via CUDA) against the CPU baseline, to run after turn 1 is merged: [issue #11](https://github.com/Olmer1st/pero/issues/11). Owner agreed.
+
+### Operating the server
+| What | Unit / script | Restart | Logs | Check from the laptop |
+|---|---|---|---|---|
+| LLM (Gemma 4 26B-A4B) | `pero-llm`, 127.0.0.1:8080 | `sudo systemctl restart pero-llm` | `sudo journalctl -u pero-llm` | `infra/scripts/part6/verify-from-client.sh pero-server` |
+| Grammar (LanguageTool 6.8) | `pero-languagetool`, 127.0.0.1:8010 | `sudo systemctl restart pero-languagetool` | `sudo journalctl -u pero-languagetool` | `infra/scripts/part7/verify-from-client.sh pero-server` |
+| Pero server | `pero-server`, :8443 (HTTPS) | `sudo systemctl restart pero-server` | `sudo journalctl -u pero-server` | `infra/scripts/part8/verify-from-client.sh pero-server` |
+| Network exposure | ufw | | | `infra/scripts/part9/verify-from-client.sh pero-server` |
+
+The server starts the three services in that order at boot. The owner reaches the server at `https://writer.local:8443/health` after importing `~/.pero-ca/ca.crt` into the client once.
+Privileged steps stay reviewed scripts: the owner installs a one-time limited grant (`infra/scripts/grant-sudo.sh`) when the assistant should run them, and removes it afterwards (`sudo rm /etc/sudoers.d/pero-<bundle>` **on the server**).
+
+### Known issues
+- Reboot test pending for parts 6, 7 and 8 (Wi-Fi reconnection after boot untested); lid-close test pending for part 2. Do both when physically at the server, then rerun the three `verify-from-client.sh` scripts.
+- `/health` has no login; no idle timeout after the TLS handshake.
+- Wi-Fi only, DHCP lease not reserved.
+- Server certificate expires 2027-10-28 (renew by 2027-09-28); back up `~/.pero-ca` offline.
+- Recommendations from the baseline awaiting the owner: disable bluetooth, ModemManager and udisks2; check NetworkManager vs `networking`; remove `/opt/pero-provision/pero-part*`.
+
+### Notes for turn 2
+- Server base: `pero-server` is a minimal axum app in `core/` (config in `core/src/config.rs`, TLS in `core/src/tls.rs`, `/health` in `core/src/health.rs`). Add routes to `health::router`-style modules; keep dependencies few and run `cargo audit` and `cargo deny check` before each commit.
+- Services to call from the server: LLM `127.0.0.1:8080` (llama.cpp OpenAI-style API; one request at a time, thinking off by default; 7–10 tokens/s generation, 22–32 tokens/s prompt reading) and LanguageTool `127.0.0.1:8010` (callers must pass `ru-RU` or `en-US`).
+- Rust is built on the dev laptop and the binary is deployed (`infra/scripts/part8/25-build.sh`, `30-install-server.sh`); the server has no Rust toolchain.
+- The local LLM is slow for long prompts; keep prompts scene-sized.

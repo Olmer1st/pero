@@ -37,7 +37,7 @@ echo "-- failed units:"; systemctl --failed --no-legend --no-pager
 sec "Pero files: owners and permissions"
 ls -ld /etc/pero /etc/pero/tls /var/lib/pero /var/lib/pero/models /opt/pero /opt/pero/*
 ls -l /etc/pero /etc/pero/tls
-echo "world-writable files or directories under /opt/pero /etc/pero /var/lib/pero:"; find /opt/pero /etc/pero /var/lib/pero -perm -o+w 2>/dev/null | head; echo "(end)"
+echo "world-writable non-symlink files or directories under /opt/pero /etc/pero /var/lib/pero:"; find /opt/pero /etc/pero /var/lib/pero -perm -o+w ! -type l 2>/dev/null | head; echo "(end)"
 echo "files under /opt/pero not owned by root:"; find /opt/pero ! -user root 2>/dev/null | head; echo "(end)"
 sec "SHA-256 of installed programs and model"
 sha256sum /opt/pero/llama.cpp/current/bin/llama-server /opt/pero/server/current/pero-server 2>/dev/null
