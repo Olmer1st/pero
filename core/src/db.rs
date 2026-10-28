@@ -1,9 +1,6 @@
 //! SQLite access: connection settings and versioned migrations (sqlx).
 //! The database holds structure and identifiers only; the prose lives in the book repositories.
 
-// Used from the manuscript store (next part); until then only the tests call it.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::{path::Path, time::Duration};

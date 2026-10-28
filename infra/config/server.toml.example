@@ -4,3 +4,5 @@ tls_cert = "/etc/pero/tls/server.crt"   # signed by the home CA (infra/scripts/p
 tls_key = "/etc/pero/tls/server.key"    # created on the server, never leaves it
 llm = "127.0.0.1:8080"                  # llama.cpp server (loopback)
 languagetool = "127.0.0.1:8010"         # LanguageTool (loopback)
+# data_dir = "/var/lib/pero/data"       # SQLite file and book repositories; the manuscript API stays off without it.
+#                                       # Set it only after device authentication is installed (turn 2, part 6).

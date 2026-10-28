@@ -1,10 +1,15 @@
 //! Pero server. The only process that listens on the network (HTTPS, port 8443).
 //! llama.cpp and LanguageTool stay on 127.0.0.1; this server only asks them whether they are alive.
 
+mod api;
 mod config;
 mod db;
+mod git;
 mod health;
 mod http_probe;
+mod ids;
+mod manuscript;
+mod store;
 mod tls;
 
 use std::process::ExitCode;
@@ -45,7 +50,15 @@ async fn run() -> Result<(), String> {
         env!("CARGO_PKG_VERSION"),
         cfg.bind
     );
-    let app = health::router(health::AppState::new(cfg.llm, cfg.languagetool));
+    let mut app = health::router(health::AppState::new(cfg.llm, cfg.languagetool));
+    if let Some(data_dir) = &cfg.data_dir {
+        // The manuscript API has no login until device authentication exists, so it is only mounted
+        // when `data_dir` is set: do not set it on a server before that part is installed.
+        let pool = db::open(&data_dir.join("pero.db")).await?;
+        let store = store::Store::new(pool, data_dir.join("books"))?;
+        app = app.merge(api::router(store));
+        eprintln!("manuscript API enabled, data in {}", data_dir.display());
+    }
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await
