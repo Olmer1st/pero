@@ -141,6 +141,86 @@ const again = align(saved.scene.passages, toParagraphs(edited + "\n\nТрети�
 const second = await api.saveScene(scene.id, { base_revision: saved.scene.revision, fields, passages: again.passages, merged: again.merged });
 assert.equal(second.scene.passages.length, 3);
 assert.equal(second.scene.passages[2]!.text, "Третий абзац.");
+
+// --- story graph and canon ledger, as the story bible screens use them ------------------------------------
+const grisha = await api.createEntity(book.id, { kind: "character", name: "Григорий", aliases: ["Гриша", "Гриня"], description: "Гитарист." });
+assert.deepEqual(keys(grisha), fieldsOf("Entity"));
+const anna = await api.createEntity(book.id, { kind: "character", name: "Анна" });
+const club = await api.createEntity(book.id, { kind: "place", name: "Клуб 27" });
+const found = await api.patchEntity(grisha.id, { name: "Григорий Петров", aliases: ["Гриша"], description: "Гитарист и мечтатель." });
+assert.equal(found.name, "Григорий Петров");
+assert.deepEqual(found.aliases, ["Гриша"]);
+
+const rel = await api.createRelationship(book.id, { from_entity_id: grisha.id, to_entity_id: anna.id, kind: "друг", directed: false });
+assert.deepEqual(keys(rel), fieldsOf("Relationship"));
+await assert.rejects(
+  api.createRelationship(book.id, { from_entity_id: anna.id, to_entity_id: grisha.id, kind: "друг", directed: false }),
+  (e: unknown) => e instanceof api.ApiError && e.code === "already_exists",
+);
+
+const ev1 = await api.createEvent(book.id, { title: "Концерт", when_text: "весна 1987", place_id: club.id, scene_id: scene.id, participants: [{ entity_id: grisha.id, role: "гитара" }] });
+assert.deepEqual(keys(ev1), fieldsOf("Event"));
+const ev2 = await api.createEvent(book.id, { title: "Прощание" });
+assert.deepEqual((await api.listEvents(book.id)).map((e) => e.title), ["Концерт", "Прощание"]);
+await api.patchEvent(ev2.id, { sort_order: ev1.sort_order - 5 }); // moved before the first one
+assert.deepEqual((await api.listEvents(book.id)).map((e) => e.title), ["Прощание", "Концерт"]);
+await api.patchEvent(ev2.id, { when_text: null });
+
+// an entity that is in use is refused; the author may then delete it together with its links
+await assert.rejects(api.deleteEntity(anna.id), (e: unknown) => e instanceof api.ApiError && e.code === "in_use");
+await api.deleteEntity(anna.id, true);
+assert.equal((await api.listRelationships(book.id)).length, 0);
+
+// a hypothesis proposed by AI waits for the author; approving it is recorded with who and when
+const cited = second.scene.passages[0]!;
+const hypothesis = await api.createFact(book.id, {
+  text: "У Григория шрам на левой руке",
+  entity_id: grisha.id,
+  origin: "ai",
+  source_ref: "e2e",
+  evidence: [{ passage_id: cited.id! }],
+});
+assert.deepEqual(keys(hypothesis), fieldsOf("Fact"));
+assert.equal(hypothesis.status, "ai_hypothesis");
+assert.deepEqual(keys(hypothesis.evidence[0]!), fieldsOf("EvidenceOut"));
+assert.equal((await api.listFacts(book.id, { status: "ai_hypothesis" })).length, 1);
+
+const passage = await api.getPassage(cited.id!);
+assert.deepEqual(keys(passage), fieldsOf("PassageInfo"));
+assert.equal(passage.scene_id, scene.id, "evidence leads to the scene");
+
+const approved = await api.transitionFact(hypothesis.id, "approve");
+assert.equal(approved.status, "author_approved");
+assert.equal(approved.approved_by, "e2e");
+const hist = await api.factHistory(hypothesis.id);
+assert.deepEqual(keys(hist), fieldsOf("HistoryResponse"));
+assert.deepEqual(keys(hist.history[0]!), fieldsOf("HistoryEntry"));
+assert.deepEqual(hist.history.map((h) => [h.from_status, h.to_status]), [[null, "ai_hypothesis"], ["ai_hypothesis", "author_approved"]]);
+assert.equal((await api.listFacts(book.id, { status: "ai_hypothesis" })).length, 0);
+
+// an entity with canon facts cannot be deleted, even with cascade
+await assert.rejects(api.deleteEntity(grisha.id, true), (e: unknown) => e instanceof api.ApiError && e.code === "in_use");
+
+// editing the cited paragraph marks the fact's evidence as changed; "still correct" clears it
+const cur = await api.getScene(scene.id);
+const reworded = toDocument(cur.passages).replace("Первый абзац, теперь переписанный.", "Первый абзац, ещё раз переписанный.");
+const re = align(cur.passages, toParagraphs(reworded));
+await api.saveScene(scene.id, { base_revision: cur.revision, fields, passages: re.passages, merged: re.merged });
+const stale = (await api.listFacts(book.id, { stale: true }))[0]!;
+assert.equal(stale.id, hypothesis.id);
+assert.equal(stale.evidence[0]!.changed, true);
+const cleared = await api.replaceEvidence(hypothesis.id, stale.evidence.map((x) => x.passage_id));
+assert.equal(cleared.stale, false);
+
+// reject with a reason and take it back to a hypothesis (AI-origin facts only)
+const rejected = await api.transitionFact(hypothesis.id, "reject", { reason: "не подтверждается" });
+assert.equal(rejected.status, "rejected");
+const reopened = await api.transitionFact(hypothesis.id, "reopen");
+assert.equal(reopened.status, "ai_hypothesis");
+const mine = await api.createFact(book.id, { text: "Анна играет на басу" });
+assert.equal(mine.status, "author_approved", "a fact the author adds is canon at once");
+await assert.rejects(api.transitionFact(mine.id, "reopen"), (e: unknown) => e instanceof api.ApiError && e.status === 409);
+
 console.log("COMMIT " + saved.commit);
 console.log("COMMIT " + second.commit);
 

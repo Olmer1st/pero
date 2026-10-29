@@ -26,9 +26,9 @@
 <main class:wide={session.device && router.route.name === "scene"}>
   {#if session.device}
     {#if router.route.name === "book"}
-      <BookPage id={router.route.id} />
+      <BookPage id={router.route.id} tab={router.route.tab} />
     {:else if router.route.name === "scene"}
-      <SceneEditor id={router.route.id} />
+      <SceneEditor id={router.route.id} passage={router.route.passage} />
     {:else}
       <Books />
     {/if}

@@ -87,6 +87,16 @@
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
   }
 
+  /** Scrolls to a stretch of the text and selects it (a paragraph opened from the canon ledger). */
+  export function reveal(from: number, to: number): void {
+    if (!view) return;
+    view.dispatch({
+      selection: { anchor: from, head: to },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+    view.focus();
+  }
+
   export function focus(): void {
     view?.focus();
   }

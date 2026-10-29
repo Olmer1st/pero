@@ -1,11 +1,11 @@
 <script lang="ts">
   import type { Scene } from "../generated/api.ts";
-  import { ApiError, getScene, saveScene } from "../lib/api.ts";
+  import { ApiError, getBook, getScene, saveScene } from "../lib/api.ts";
   import { align, toDocument, toParagraphs } from "../lib/passages.ts";
   import { href, router } from "../lib/route.svelte.ts";
   import Editor from "./Editor.svelte";
 
-  let { id }: { id: string } = $props();
+  let { id, passage }: { id: string; passage?: string } = $props();
 
   type Meta = { title: string; pov: string; date: string; location: string };
   const metaOf = (s: Scene): Meta => ({
@@ -26,6 +26,7 @@
   let saveError = $state("");
   let conflict = $state<Scene | null>(null);
   let editor = $state<Editor>();
+  let bookTitle = $state("Book");
 
   const dirty = $derived(
     scene !== null &&
@@ -51,6 +52,7 @@
     getScene(wanted)
       .then((s) => {
         if (wanted === id) adopt(s);
+        getBook(s.book_id).then((b) => (bookTitle = b.title)).catch(() => {});
       })
       .catch((e: unknown) => {
         if (e instanceof ApiError && e.status === 401) return; // the session signs out
@@ -76,6 +78,18 @@
     return () => {
       document.title = "Pero";
     };
+  });
+
+  // Opened from evidence in the canon ledger: show the paragraph that was cited.
+  let shown = "";
+  $effect(() => {
+    if (scene === null || !editor || !passage || shown === `${id}/${passage}`) return;
+    const index = scene.passages.findIndex((p) => p.id === passage);
+    shown = `${id}/${passage}`;
+    if (index < 0) return;
+    let from = 0;
+    for (let i = 0; i < index; i++) from += (scene.passages[i]?.text.length ?? 0) + 2;
+    editor.reveal(from, from + (scene.passages[index]?.text.length ?? 0));
   });
 
   const optional = (text: string): string | undefined => (text.trim() === "" ? undefined : text.trim());
@@ -147,7 +161,7 @@
 {:else}
   <nav class="crumbs" aria-label="Where you are">
     <a href={href({ name: "books" })}>Books</a> ›
-    <a href={href({ name: "book", id: scene.book_id })}>Book</a> ›
+    <a href={href({ name: "book", id: scene.book_id, tab: "chapters" })}>{bookTitle}</a> ›
     <span>{meta.title || "Untitled scene"}</span>
   </nav>
 

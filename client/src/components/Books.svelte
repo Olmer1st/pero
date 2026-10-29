@@ -65,7 +65,7 @@
     <ul class="books">
       {#each books as book (book.id)}
         <li class="card">
-          <a class="title" href={href({ name: "book", id: book.id })}>{book.title}</a>
+          <a class="title" href={href({ name: "book", id: book.id, tab: "chapters" })}>{book.title}</a>
           <span class="muted">{details(book)}</span>
         </li>
       {/each}

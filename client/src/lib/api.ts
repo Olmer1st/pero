@@ -6,14 +6,28 @@ import type {
   Book,
   Chapter,
   Device,
+  Entity,
+  EntityPatch,
   ErrorBody,
+  Event,
+  EventPatch,
+  Fact,
+  FactPatch,
   HealthReport,
+  HistoryResponse,
   ImportRequest,
   ImportSummary,
+  NewEntity,
+  NewEvent,
+  NewFact,
+  NewRelationship,
+  PassageInfo,
+  Relationship,
   SaveScene,
   Saved,
   Scene,
   SceneInfo,
+  TransitionBody,
 } from "../generated/api.ts";
 
 export class ApiError extends Error {
@@ -129,4 +143,65 @@ export function getScene(id: string): Promise<Scene> {
 /// 409 `revision_conflict` and the error body carries the scene as it is now (`body.current`).
 export function saveScene(id: string, body: SaveScene): Promise<Saved> {
   return request<Saved>("PUT", `/api/v1/scenes/${encodeURIComponent(id)}`, body);
+}
+
+// ---- story graph --------------------------------------------------------------------------------
+
+const q = (params: Record<string, string | boolean | undefined>): string => {
+  const pairs = Object.entries(params).filter(([, v]) => v !== undefined && v !== "");
+  return pairs.length === 0
+    ? ""
+    : "?" + pairs.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
+};
+const enc = encodeURIComponent;
+
+export const listEntities = (bookId: string): Promise<Entity[]> =>
+  request("GET", `/api/v1/books/${enc(bookId)}/entities`);
+export const createEntity = (bookId: string, body: NewEntity): Promise<Entity> =>
+  request("POST", `/api/v1/books/${enc(bookId)}/entities`, body);
+export const patchEntity = (id: string, body: EntityPatch): Promise<Entity> =>
+  request("PATCH", `/api/v1/entities/${enc(id)}`, body);
+/// 409 `in_use` unless `cascade`; canon facts about the entity always block (the message says so).
+export const deleteEntity = (id: string, cascade = false): Promise<void> =>
+  request("DELETE", `/api/v1/entities/${enc(id)}${q({ cascade: cascade || undefined })}`);
+
+export const listRelationships = (bookId: string): Promise<Relationship[]> =>
+  request("GET", `/api/v1/books/${enc(bookId)}/relationships`);
+export const createRelationship = (bookId: string, body: NewRelationship): Promise<Relationship> =>
+  request("POST", `/api/v1/books/${enc(bookId)}/relationships`, body);
+export const deleteRelationship = (id: string): Promise<void> =>
+  request("DELETE", `/api/v1/relationships/${enc(id)}`);
+
+export const listEvents = (bookId: string): Promise<Event[]> =>
+  request("GET", `/api/v1/books/${enc(bookId)}/events`);
+export const createEvent = (bookId: string, body: NewEvent): Promise<Event> =>
+  request("POST", `/api/v1/books/${enc(bookId)}/events`, body);
+export const patchEvent = (id: string, body: EventPatch): Promise<Event> =>
+  request("PATCH", `/api/v1/events/${enc(id)}`, body);
+export const deleteEvent = (id: string): Promise<void> =>
+  request("DELETE", `/api/v1/events/${enc(id)}`);
+
+// ---- canon ledger -------------------------------------------------------------------------------
+
+export const listFacts = (bookId: string, filter: { status?: string; stale?: boolean } = {}): Promise<Fact[]> =>
+  request("GET", `/api/v1/books/${enc(bookId)}/facts${q(filter)}`);
+export const createFact = (bookId: string, body: NewFact): Promise<Fact> =>
+  request("POST", `/api/v1/books/${enc(bookId)}/facts`, body);
+export const patchFact = (id: string, body: FactPatch): Promise<Fact> =>
+  request("PATCH", `/api/v1/facts/${enc(id)}`, body);
+/// `approve` is the only way a fact that did not start approved becomes canon; the server records who.
+export const transitionFact = (id: string, action: "approve" | "reject" | "reopen", body: TransitionBody = {}): Promise<Fact> =>
+  request("POST", `/api/v1/facts/${enc(id)}/${action}`, body);
+export const factHistory = (id: string): Promise<HistoryResponse> =>
+  request("GET", `/api/v1/facts/${enc(id)}/history`);
+/// Sending the same passages again says "I checked: the evidence still holds" and clears the stale flag.
+export const replaceEvidence = (id: string, passageIds: string[]): Promise<Fact> =>
+  request("PUT", `/api/v1/facts/${enc(id)}/evidence`, { evidence: passageIds.map((passage_id) => ({ passage_id })) });
+export const getPassage = (id: string): Promise<PassageInfo> =>
+  request("GET", `/api/v1/passages/${enc(id)}`);
+
+/// Text to show for a failed call; nothing for a 401, because the session signs out by itself.
+export function describe(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) return e.status === 401 ? "" : e.message;
+  return fallback;
 }

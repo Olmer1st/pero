@@ -25,6 +25,9 @@ PERO_DEV_SERVER=https://127.0.0.1:18443 npm run dev   # dev page at http://local
 ## Editing a scene
 `src/lib/passages.ts` turns the edited text back into the passage list for a save (which paragraph continues which ID; see `docs/data-model.md` for the passage rules). Saves are based on the revision the editor loaded; a 409 offers keep mine, load the other version, or copy my text. Ctrl+S saves.
 
+## Story bible
+Chapters, Characters & places, Timeline and Canon are sections of a book (`#/book/<id>/entities` and so on). To try the canon approval flow before any AI feature exists, add one sample hypothesis to a book: `client/e2e/seed-hypothesis.sh https://writer.local:8443 <book-id>` (asks for the device token without echo).
+
 ## Rules the code follows
 - The device token lives only in memory (`src/lib/api.ts`): never local or session storage, cookies or files. Reloading signs out.
 - Requests carry no cookies and are never cached. A 401 with a token signs the app out.
