@@ -70,7 +70,37 @@ function isErrorBody(value: unknown): value is ErrorBody {
   return typeof error === "object" && error !== null && "code" in error && "message" in error;
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/// True inside the desktop app: there the requests are made by the app itself (with the home CA built in and the
+/// device token from the system keychain), not by the web view, and this module never holds the token.
+export function isDesktop(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+async function call<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    return await invoke<T>(command, args);
+  } catch (e) {
+    throw new ApiError(0, "desktop", typeof e === "string" ? e : "The desktop app could not do that.", null);
+  }
+}
+
+let desktopSignedIn = false;
+const signedIn = (): boolean => token !== null || desktopSignedIn;
+
+async function transport(method: string, path: string, body?: unknown): Promise<{ status: number; text: string }> {
+  if (isDesktop()) {
+    try {
+      const r = await call<{ status: number; body: string }>("api_request", {
+        method,
+        path,
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+      return { status: r.status, text: r.body };
+    } catch (e) {
+      throw new ApiError(0, "unreachable", e instanceof ApiError ? e.message : "Cannot reach the server.", null);
+    }
+  }
   const headers: Record<string, string> = { Accept: "application/json" };
   if (token !== null) headers["Authorization"] = `Bearer ${token}`;
   const init: RequestInit = { method, headers, credentials: "omit", cache: "no-store" };
@@ -78,15 +108,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
-
-  let response: Response;
   try {
-    response = await fetch(path, init);
+    const response = await fetch(path, init);
+    return { status: response.status, text: await response.text() };
   } catch {
     throw new ApiError(0, "unreachable", "Cannot reach the server.", null);
   }
+}
 
-  const text = await response.text();
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const { status, text } = await transport(method, path, body);
   let parsed: unknown = null;
   if (text !== "") {
     try {
@@ -96,14 +127,55 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
   }
 
-  if (!response.ok) {
-    if (response.status === 401 && token !== null) onUnauthorized?.();
+  if (status < 200 || status >= 300) {
+    if (status === 401 && signedIn()) onUnauthorized?.();
     if (isErrorBody(parsed)) {
-      throw new ApiError(response.status, parsed.error.code, parsed.error.message, parsed);
+      throw new ApiError(status, parsed.error.code, parsed.error.message, parsed);
     }
-    throw new ApiError(response.status, "http_error", `The server answered ${response.status}.`, null);
+    throw new ApiError(status, "http_error", `The server answered ${status}.`, null);
   }
   return parsed as T;
+}
+
+// ---- signing in -----------------------------------------------------------------------------------
+
+export type Found = { address: string; version: string };
+
+/// Desktop only: finds the server (an address typed by hand first, then `writer.local`).
+export const findServer = (): Promise<Found> => call<Found>("discover");
+export const useAddress = (address: string): Promise<Found> => call<Found>("use_address", { address });
+
+/// Checks the token with the server. In the browser it is kept in memory; in the desktop app the app keeps it in the
+/// system keychain. `remembered` says whether it will still be there after the app closes.
+export async function signIn(value: string): Promise<{ device: Device; remembered: boolean }> {
+  if (isDesktop()) {
+    const session = await call<{ device: Device; remembered: boolean }>("sign_in", { token: value });
+    desktopSignedIn = true;
+    return session;
+  }
+  setToken(value);
+  try {
+    return { device: await me(), remembered: false };
+  } catch (e) {
+    clearToken();
+    throw e;
+  }
+}
+
+/// Desktop only: signs in again with the token from the keychain, if there is one the server still accepts.
+export async function resume(): Promise<{ device: Device; remembered: boolean } | null> {
+  if (!isDesktop()) return null;
+  const session = await call<{ device: Device; remembered: boolean } | null>("resume");
+  desktopSignedIn = session !== null;
+  return session;
+}
+
+export async function signOut(): Promise<void> {
+  clearToken();
+  if (isDesktop()) {
+    desktopSignedIn = false;
+    await call("sign_out");
+  }
 }
 
 /// Open to everyone: no manuscript data.

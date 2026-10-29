@@ -9,8 +9,13 @@
 
   function signOut(): void {
     if (router.guard !== null && !router.guard()) return;
-    session.signOut();
+    void session.signOut();
   }
+
+  // The desktop app looks for the server and signs in with the keychain's token; in the browser this does nothing.
+  $effect(() => {
+    void session.start();
+  });
 </script>
 
 <header>

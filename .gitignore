@@ -5,3 +5,5 @@
 *.pem
 /client/node_modules/
 /client/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
