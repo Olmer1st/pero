@@ -17,9 +17,24 @@ use axum::{
 };
 
 /// Everything the page needs comes from this server; nothing is inlined or loaded from elsewhere.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
-frame-ancestors 'none'";
+/// The editor library writes its styles into a `<style>` element when the page runs; those carry a
+/// nonce that is new on every request for the page (`__CSP_NONCE__` in `index.html` is replaced with
+/// it, and the client hands it to the editor), so styles that an attacker could inject do not apply.
+fn content_security_policy(nonce: &str) -> String {
+    format!(
+        "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-{nonce}'; img-src 'self' data:; \
+         font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    )
+}
+
+const NONCE_PLACEHOLDER: &str = "__CSP_NONCE__";
+
+/// 128 random bits, hex.
+fn new_nonce() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("operating system random source");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 type Dir = Arc<PathBuf>;
 
@@ -63,15 +78,19 @@ fn content_type(name: &str) -> Option<&'static str> {
     })
 }
 
-fn respond(body: Vec<u8>, content_type: &'static str, cache: &'static str) -> Response {
+fn respond(
+    body: Vec<u8>,
+    content_type: &'static str,
+    cache: &'static str,
+    policy: &str,
+) -> Response {
     let mut res = (StatusCode::OK, body).into_response();
     let h = res.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
-    );
+    if let Ok(value) = HeaderValue::from_str(policy) {
+        h.insert(header::CONTENT_SECURITY_POLICY, value);
+    }
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -89,10 +108,17 @@ async fn read(path: PathBuf) -> Option<Vec<u8>> {
 }
 
 async fn index(State(dir): State<Dir>) -> Response {
-    match read(dir.join("index.html")).await {
-        Some(body) => respond(body, "text/html; charset=utf-8", "no-store"),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
+    let Some(page) = read(dir.join("index.html")).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let nonce = new_nonce();
+    let page = String::from_utf8_lossy(&page).replace(NONCE_PLACEHOLDER, &nonce);
+    respond(
+        page.into_bytes(),
+        "text/html; charset=utf-8",
+        "no-store",
+        &content_security_policy(&nonce),
+    )
 }
 
 async fn asset(State(dir): State<Dir>, UrlPath(file): UrlPath<String>) -> Response {
@@ -101,7 +127,12 @@ async fn asset(State(dir): State<Dir>, UrlPath(file): UrlPath<String>) -> Respon
     };
     match read(dir.join("assets").join(&file)).await {
         // File names carry a content hash, so they may be cached for good.
-        Some(body) => respond(body, kind, "public, max-age=31536000, immutable"),
+        Some(body) => respond(
+            body,
+            kind,
+            "public, max-age=31536000, immutable",
+            &content_security_policy(&new_nonce()),
+        ),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -117,7 +148,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pero-web-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::write(dir.join("index.html"), "<!doctype html><title>Pero</title>").unwrap();
+        std::fs::write(
+            dir.join("index.html"),
+            "<!doctype html><title>Pero</title><meta name=\"csp-nonce\" content=\"__CSP_NONCE__\">",
+        )
+        .unwrap();
         std::fs::write(dir.join("assets/app-1a2b.js"), "console.log(1)").unwrap();
         std::fs::write(dir.join("assets/app-1a2b.css"), "body{}").unwrap();
         std::fs::write(dir.join("assets/.hidden.js"), "secret").unwrap();
@@ -151,6 +186,38 @@ mod tests {
         );
         assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(h[header::X_FRAME_OPTIONS], "DENY");
+
+        // the style nonce in the policy is the one written into the page, and differs per request
+        let policy = h[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let nonce = policy
+            .split("'nonce-")
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap()
+            .to_string();
+        assert_eq!(nonce.len(), 32);
+        let html = String::from_utf8(
+            axum::body::to_bytes(page.into_body(), 1 << 20)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains(&format!("content=\"{nonce}\"")), "{html}");
+        assert!(!html.contains("__CSP_NONCE__"));
+        let again = get_path(&app, "/").await;
+        assert_ne!(
+            again.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap(),
+            policy
+        );
+        assert!(!policy.contains("unsafe-inline"));
 
         let js = get_path(&app, "/assets/app-1a2b.js").await;
         assert_eq!(js.status(), StatusCode::OK);

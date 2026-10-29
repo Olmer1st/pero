@@ -103,4 +103,45 @@ await assert.rejects(
 );
 assert.equal((await api.listBooks()).length, 1);
 
+// --- open a scene, edit it, save it (a Git commit), conflict handling -------------------------------
+const { align, toDocument, toParagraphs } = await import("../src/lib/passages.ts");
+const book = books[0]!;
+const chapters = await api.listChapters(book.id);
+assert.equal(chapters.length, 2);
+assert.deepEqual(keys(chapters[0]!), fieldsOf("Chapter"));
+const scenes = await api.listScenes(chapters[0]!.id);
+assert.deepEqual(keys(scenes[0]!), fieldsOf("SceneInfo"));
+const scene = await api.getScene(scenes[0]!.id);
+assert.equal(scene.passages.length, 2);
+assert.ok(scene.passages.every((p) => typeof p.id === "string"));
+
+const edited = toDocument(scene.passages).replace("Первый абзац.", "Первый абзац, теперь переписанный.");
+const { passages, merged } = align(scene.passages, toParagraphs(edited));
+const fields = { title: scene.title, language: scene.language };
+const saved = await api.saveScene(scene.id, { base_revision: scene.revision, fields, passages, merged });
+assert.deepEqual(keys(saved), fieldsOf("Saved"));
+assert.match(saved.commit ?? "", /^[0-9a-f]{40}$/, "a save makes a commit");
+assert.notEqual(saved.scene.revision, scene.revision);
+assert.deepEqual(saved.scene.passages.map((p) => p.id), scene.passages.map((p) => p.id), "IDs survive an edit");
+assert.equal(saved.scene.passages[0]!.text, "Первый абзац, теперь переписанный.");
+const reloaded = await api.getScene(scene.id);
+assert.equal(reloaded.passages[0]!.text, "Первый абзац, теперь переписанный.", "a reload shows the change");
+
+// a save based on the old revision is refused with the current scene, and "keep mine" works on top of it
+await assert.rejects(
+  api.saveScene(scene.id, { base_revision: scene.revision, fields, passages, merged }),
+  (e: unknown) => {
+    assert.ok(e instanceof api.ApiError);
+    assert.equal(e.code, "revision_conflict");
+    assert.equal(e.body?.current?.revision, saved.scene.revision);
+    return true;
+  },
+);
+const again = align(saved.scene.passages, toParagraphs(edited + "\n\nТретий абзац."));
+const second = await api.saveScene(scene.id, { base_revision: saved.scene.revision, fields, passages: again.passages, merged: again.merged });
+assert.equal(second.scene.passages.length, 3);
+assert.equal(second.scene.passages[2]!.text, "Третий абзац.");
+console.log("COMMIT " + saved.commit);
+console.log("COMMIT " + second.commit);
+
 console.log("E2E PASSED against a real server");

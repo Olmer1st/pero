@@ -66,3 +66,19 @@ button:disabled { opacity: 0.6; cursor: default; }
 .books .card { display: flex; flex-direction: column; margin: 0.5rem 0; }
 .books .title { font-weight: 600; font-size: 1.1rem; }
 .issues { color: var(--bad); padding-left: 1.2rem; margin: 0.25rem 0; }
+.crumbs { margin-bottom: 0.75rem; color: var(--muted); font-size: 0.95rem; }
+a { color: var(--accent); }
+.chapters { list-style: none; padding: 0; margin: 0; }
+.chapters .card { margin: 0.6rem 0; }
+.chapters h2 { margin: 0 0 0.4rem; }
+.scenes { margin: 0; padding-left: 1.2rem; }
+.toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+.state { font-size: 0.95rem; color: var(--muted); }
+.state.dirty { color: var(--warn); font-weight: 600; }
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.5rem 1rem; margin-bottom: 0.75rem; }
+.meta label { margin: 0; font-weight: 400; display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.9rem; color: var(--muted); }
+.meta input { color: var(--fg); }
+.editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.hint { font-size: 0.9rem; margin-top: 0.5rem; }
+main.wide { max-width: 64rem; }
+.notice p { margin: 0 0 0.5rem; }

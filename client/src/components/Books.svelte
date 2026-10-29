@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Book } from "../generated/api.ts";
   import { ApiError, listBooks } from "../lib/api.ts";
+  import { href } from "../lib/route.svelte.ts";
   import ImportBook from "./ImportBook.svelte";
 
   let books = $state<Book[] | null>(null);
@@ -64,7 +65,7 @@
     <ul class="books">
       {#each books as book (book.id)}
         <li class="card">
-          <span class="title">{book.title}</span>
+          <a class="title" href={href({ name: "book", id: book.id })}>{book.title}</a>
           <span class="muted">{details(book)}</span>
         </li>
       {/each}

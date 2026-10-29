@@ -4,11 +4,16 @@
 
 import type {
   Book,
+  Chapter,
   Device,
   ErrorBody,
   HealthReport,
   ImportRequest,
   ImportSummary,
+  SaveScene,
+  Saved,
+  Scene,
+  SceneInfo,
 } from "../generated/api.ts";
 
 export class ApiError extends Error {
@@ -102,4 +107,26 @@ export function listBooks(): Promise<Book[]> {
 
 export function importBook(body: ImportRequest): Promise<ImportSummary> {
   return request<ImportSummary>("POST", "/api/v1/books/import", body);
+}
+
+export function getBook(id: string): Promise<Book> {
+  return request<Book>("GET", `/api/v1/books/${encodeURIComponent(id)}`);
+}
+
+export function listChapters(bookId: string): Promise<Chapter[]> {
+  return request<Chapter[]>("GET", `/api/v1/books/${encodeURIComponent(bookId)}/chapters`);
+}
+
+export function listScenes(chapterId: string): Promise<SceneInfo[]> {
+  return request<SceneInfo[]>("GET", `/api/v1/chapters/${encodeURIComponent(chapterId)}/scenes`);
+}
+
+export function getScene(id: string): Promise<Scene> {
+  return request<Scene>("GET", `/api/v1/scenes/${encodeURIComponent(id)}`);
+}
+
+/// A save is based on the revision the editor loaded; if the scene changed since, the server answers
+/// 409 `revision_conflict` and the error body carries the scene as it is now (`body.current`).
+export function saveScene(id: string, body: SaveScene): Promise<Saved> {
+  return request<Saved>("PUT", `/api/v1/scenes/${encodeURIComponent(id)}`, body);
 }

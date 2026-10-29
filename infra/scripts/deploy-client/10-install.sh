@@ -20,8 +20,8 @@ runuser -u pero -- true
 
 BK=/var/lib/pero/turn2-backup
 install -d -m 0700 -o root -g root "$BK"
-[ -f "$BK/server.toml" ] || cp -p $CFG "$BK/server.toml"
-[ -f "$BK/current" ] || readlink /opt/pero/server/current > "$BK/current"
+cp -p $CFG "$BK/server.toml"                      # the state before this install, so a rollback goes back one step
+readlink /opt/pero/server/current > "$BK/current"
 rollback() {
   echo "Putting turn 2 back." >&2
   cp -p "$BK/server.toml" $CFG

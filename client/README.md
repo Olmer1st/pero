@@ -22,7 +22,10 @@ PERO_SERVE=1 client/e2e/run-local.sh             # keep that server running; pri
 PERO_DEV_SERVER=https://127.0.0.1:18443 npm run dev   # dev page at http://localhost:5173, API forwarded
 ```
 
+## Editing a scene
+`src/lib/passages.ts` turns the edited text back into the passage list for a save (which paragraph continues which ID; see `docs/data-model.md` for the passage rules). Saves are based on the revision the editor loaded; a 409 offers keep mine, load the other version, or copy my text. Ctrl+S saves.
+
 ## Rules the code follows
 - The device token lives only in memory (`src/lib/api.ts`): never local or session storage, cookies or files. Reloading signs out.
 - Requests carry no cookies and are never cached. A 401 with a token signs the app out.
-- Screens use no inline scripts or styles, so the server's strict Content-Security-Policy applies.
+- Screens use no inline scripts or styles, so the server's strict Content-Security-Policy applies (the editor's own styles carry the per-request nonce the server writes into `index.html`).

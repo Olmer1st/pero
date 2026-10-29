@@ -33,5 +33,12 @@ if [ -n "${PERO_SERVE:-}" ]; then   # keep the server up for looking at the page
   echo "server https://127.0.0.1:$PORT  token $TOKEN  (CA: $T/ca.crt)"; echo "ready"; wait "$(cat "$T/pid")"; exit 0
 fi
 NODE_EXTRA_CA_CERTS="$T/ca.crt" PERO_E2E_URL="https://127.0.0.1:$PORT" PERO_E2E_TOKEN="$TOKEN" \
-  node --experimental-strip-types --no-warnings e2e/e2e.ts
+  node --experimental-strip-types --no-warnings e2e/e2e.ts | tee "$T/e2e.out"
+# the saves really are Git commits in the book's repository, authored by the device
+REPO="$(ls -d "$T"/data/books/*/ | head -1)"
+for c in $(grep '^COMMIT ' "$T/e2e.out" | cut -d' ' -f2); do
+  git -C "$REPO" cat-file -e "$c" || { echo "FAIL: commit $c is not in the repository" >&2; exit 1; }
+done
+[ "$(git -C "$REPO" log --format=%an | sort -u | paste -sd,)" = "e2e" ] || { echo "FAIL: commits are not authored by the device" >&2; exit 1; }
+echo "saves are Git commits authored by the device ($(git -C "$REPO" rev-list --count HEAD) commits in the book)"
 grep -q "$TOKEN" "$T/log" && { echo "FAIL: token found in the server log" >&2; exit 1; } || echo "token not in the server log"
