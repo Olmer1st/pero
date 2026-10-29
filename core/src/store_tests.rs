@@ -1,5 +1,6 @@
 use super::*;
 use crate::db;
+use pero_shared::manuscript::{Merge, PassageIn};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);

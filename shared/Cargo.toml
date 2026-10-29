@@ -1,0 +1,17 @@
+[package]
+name = "pero-shared"
+description = "Pero API types, defined once: the server uses them and the client's TypeScript types are generated from them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Lets the server read these types straight from database rows.
+sqlx = ["dep:sqlx"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+ts-rs = { version = "12.0.1", default-features = false, features = ["serde-compat", "no-serde-warnings"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["derive"], optional = true }

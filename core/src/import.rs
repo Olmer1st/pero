@@ -9,39 +9,14 @@
 //!                       between blank lines, with `ParagraphMode::Line` every non-empty line is one
 //! Other headings (`###`, `#text`) are refused rather than guessed at.
 //! Messages never quote the manuscript: they name the file and the line.
+pub use pero_shared::error::ImportIssue as Issue;
+pub use pero_shared::manuscript::{ImportFile, ParagraphMode};
 
-use serde::Deserialize;
 use std::cmp::Ordering;
 
 use crate::manuscript;
 
 const MAX_ISSUES: usize = 50;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ParagraphMode {
-    /// Paragraphs are separated by blank lines (usual Markdown).
-    #[default]
-    BlankLine,
-    /// Every non-empty line is its own paragraph (text exported from word processors).
-    Line,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ImportFile {
-    /// File name only, ending in `.md`.
-    pub name: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Issue {
-    pub file: String,
-    /// 1-based line, or 0 when the problem concerns the whole file.
-    pub line: usize,
-    pub message: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedScene {
