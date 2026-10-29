@@ -16,6 +16,8 @@ pub struct Config {
     pub llm: String,
     /// `host:port` of the local LanguageTool service.
     pub languagetool: String,
+    /// Folder for the SQLite database and the book repositories. Without it the manuscript API is off.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -49,6 +51,16 @@ languagetool = "127.0.0.1:8010"
         let c: Config = GOOD.parse().unwrap();
         assert_eq!(c.bind.port(), 8443);
         assert_eq!(c.llm, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn data_dir_is_optional() {
+        let c: Config = GOOD.parse().unwrap();
+        assert_eq!(c.data_dir, None);
+        let c: Config = format!("{GOOD}data_dir = \"/var/lib/pero/data\"\n")
+            .parse()
+            .unwrap();
+        assert_eq!(c.data_dir, Some(PathBuf::from("/var/lib/pero/data")));
     }
 
     #[test]
