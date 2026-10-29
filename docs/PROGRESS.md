@@ -1,7 +1,7 @@
 # Progress
 
 ## Turn 2 — manuscript store, story graph, canon ledger, server API
-Status: all 6 parts implemented and confirmed on branch `feat/data-foundation`, one pull request open for the owner to merge. **Not deployed**: deployment is a separate approved step ([issue #22](https://github.com/Olmer1st/pero/issues/22)). The running server is still the turn 1 build.
+Status: complete, merged (PR 24) and **deployed on 2026-10-29** ([issue #22](https://github.com/Olmer1st/pero/issues/22), scripts in `infra/scripts/deploy-turn2/`). The server runs the turn 2 binary with `data_dir = /var/lib/pero/data`, a certificate for `writer.local` and the reserved address (valid to 2027-10-29: **renew by 2027-09-29** with `deploy-turn2/10-install.sh`, not part 8's script), and no registered device yet.
 
 | Part | Status |
 |---|---|
@@ -39,7 +39,7 @@ Request and answer shapes, error codes and rules are in `docs/data-model.md`. Er
 - Developer checks, from `core/`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo audit`, `cargo deny check` (build with `-j 3` on the 8 GB laptop).
 
 ### Known gaps
-- Not deployed (issue #22). The deploy needs: the new binary, the data folder, `ReadWritePaths` in the systemd unit (`ProtectSystem=strict`), `data_dir` in `server.toml`, a server certificate reissued for the reserved address 10.0.0.106 (CA key stays on the laptop), a check that `git` runs inside the sandbox, `device add` for each client, a smoke test, and removal of the temporary sudo grant on the server.
+- Deployed, but **no device is registered**: the API answers 401 to everything until the owner runs, on the server, `sudo -u pero /opt/pero/server/current/pero-server device add "NAME" --config /etc/pero/server.toml` (token shown once, kept in the owner's password manager). The data folder is empty; the first book comes from an import on the client. Turn 1 files for rollback: `/var/lib/pero/turn1-backup` (`30-rollback.sh`, needs a new grant).
 - `/health` is still open, and there are no idle timeouts after the TLS handshake (issue #12).
 - No automatic merge of concurrent edits (the second writer gets 409 and decides). Deleting books, chapters or scenes is not implemented. Import always creates a new book. Bulk approval of facts is turn 7. Full list in `docs/data-model.md` (Known gaps).
 
