@@ -1,5 +1,56 @@
 # Progress
 
+## Turn 2 — manuscript store, story graph, canon ledger, server API
+Status: all 6 parts implemented and confirmed on branch `feat/data-foundation`, one pull request open for the owner to merge. **Not deployed**: deployment is a separate approved step ([issue #22](https://github.com/Olmer1st/pero/issues/22)). The running server is still the turn 1 build.
+
+| Part | Status |
+|---|---|
+| 1. Data model and migrations ([#16](https://github.com/Olmer1st/pero/issues/16)) | confirmed |
+| 2. Manuscript store, passage IDs, book/chapter/scene API ([#17](https://github.com/Olmer1st/pero/issues/17)) | confirmed |
+| 3. Import, export, offline `check-import` ([#18](https://github.com/Olmer1st/pero/issues/18)) | confirmed; real-chapters check deferred ([#23](https://github.com/Olmer1st/pero/issues/23)) |
+| 4. Story graph API ([#19](https://github.com/Olmer1st/pero/issues/19)) | confirmed |
+| 5. Canon ledger API ([#20](https://github.com/Olmer1st/pero/issues/20)) | confirmed |
+| 6. Device authentication ([#21](https://github.com/Olmer1st/pero/issues/21)) | confirmed |
+
+### What works
+- **Manuscript**: one Git repository per book under `<data_dir>/books/<book-id>/` (`book.toml`, `chapters/NNN-slug/chapter.toml`, `chapters/NNN-slug/NNN-slug.md`); one commit per change, authored by the device that made it. A SQLite index (`<data_dir>/pero.db`) is rebuilt from the repository after every change and by `reindex`.
+- **Passages**: every paragraph carries a hidden stable ID (`<!-- p:ID -->`) that survives edits; removed passages stay as tombstones. A save based on an old revision gets 409 `revision_conflict` with the current scene.
+- **Import/export**: Markdown chapters in, canonical Markdown out; all-or-nothing, one commit, errors name file and line but never the text. No-text-loss is checked by comparing the whitespace-free characters of the original and the export.
+- **Story graph**: entities (character/place/organization) with aliases, relationships, timeline events.
+- **Canon ledger**: facts with status (explicit, author_approved, ai_hypothesis, rejected), evidence, history and stale flags. An AI guess becomes canon only through `approve`; facts are never deleted.
+- **Login**: every `/api/v1` route needs `Authorization: Bearer <device token>`. Tokens are shown once and stored only as SHA-256 hashes; revoking one device acts at once and leaves the others working.
+- Tests: 111 pass; `cargo fmt`, `clippy -D warnings`, `cargo audit` and `cargo deny check` are clean (189 crates, up from 76, mostly through `sqlx`).
+
+### API summary (`/api/v1`, JSON, all need a device token)
+| Area | Routes |
+|---|---|
+| Books, chapters, scenes | `/books`, `/books/{id}`, `/books/{id}/chapters/order`, `/books/{id}/export`, `/books/{id}/reindex`, `/chapters/{id}/scenes/order`, `/scenes/{id}`, `/passages/{id}`, plus import |
+| Story graph | entities, relationships, timeline events, scoped to a book |
+| Canon | facts, `/facts/{id}`, `/facts/{id}/approve`, `/reject`, `/reopen`, `/history`, `/facts/{id}/evidence` |
+| Devices | `/me`, `/devices`, `/devices/{id}/revoke` |
+| Open | `GET /health` only |
+
+Request and answer shapes, error codes and rules are in `docs/data-model.md`. Errors: 401 `unauthorized`, 404 `not_found`, 409 `revision_conflict` / `repository_dirty` / `already_exists` / `in_use` / `invalid_transition`, 422 `invalid` / `import_rejected`.
+
+### How to operate and test
+- Enable the API by setting `data_dir` in `/etc/pero/server.toml` (see `infra/config/server.toml.example`); without it only `/health` is served.
+- Register a device, on the server, as the service user (never as root): `sudo -u pero pero-server device add NAME` prints the token once. `device list` and `device revoke NAME-OR-ID` manage them.
+- Check chapters offline, nothing leaves the machine and no text is printed: `pero-server check-import <folder>` (add `--mode line` if paragraphs are single lines, `--language ru|en`).
+- Developer checks, from `core/`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo audit`, `cargo deny check` (build with `-j 3` on the 8 GB laptop).
+
+### Known gaps
+- Not deployed (issue #22). The deploy needs: the new binary, the data folder, `ReadWritePaths` in the systemd unit (`ProtectSystem=strict`), `data_dir` in `server.toml`, a server certificate reissued for the reserved address 10.0.0.106 (CA key stays on the laptop), a check that `git` runs inside the sandbox, `device add` for each client, a smoke test, and removal of the temporary sudo grant on the server.
+- Real chapters were never run through the importer (the folder does not exist yet, issue #23). Run `pero-server check-import` on them when it does and report the counts.
+- `/health` is still open, and there are no idle timeouts after the TLS handshake (issue #12).
+- No automatic merge of concurrent edits (the second writer gets 409 and decides). Deleting books, chapters or scenes is not implemented. Import always creates a new book. Bulk approval of facts is turn 7. Full list in `docs/data-model.md` (Known gaps).
+
+### Notes for turn 3
+- A client needs: the CA imported once, a device token (from `device add`), `Authorization: Bearer` on every call, and `base_revision` from the scene it loaded when saving.
+- The API exposes passages as structured `{id, text}` items, so the client never edits `<!-- p:ID -->` markers by hand; a changed paragraph keeps its ID, a split or new paragraph gets a new one from the server.
+- Passage IDs, not text offsets, are the anchor for facts, comments and later AI suggestions.
+- Entities, facts and events reference passages and scenes by ID; show the `stale` flag on facts and let the author re-cite.
+- The turn 3 client shell is described in the owner's handoff (`03-client-shell.md`); plan first and wait for approval.
+
 ## Turn 1 — server bootstrap
 Status: complete and merged (PR 13). Reboot test passed on 2026-10-28; only the part 2 lid-close test is still pending on the owner's physical access.
 
