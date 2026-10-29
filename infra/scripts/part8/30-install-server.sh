@@ -8,6 +8,8 @@ set -euo pipefail
 OWNER="${SUDO_USER:?run through sudo so the bundle directory is known}"
 SRC="/home/$OWNER/pero-part8"
 T=/etc/pero/tls
+# Turn 2 and later: this script would rewrite server.toml and the unit without data_dir and ReadWritePaths.
+if grep -q '^data_dir' /etc/pero/server.toml 2>/dev/null; then echo "data_dir is set: use infra/scripts/deploy-turn2/10-install.sh for installs and renewals." >&2; exit 1; fi
 for f in server.crt ca.crt pero-server; do [ -f "$SRC/$f" ] || { echo "Missing $SRC/$f" >&2; exit 1; }; done
 
 # 1. certificate checks
