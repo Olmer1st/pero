@@ -27,5 +27,6 @@ done
 [ "$(code $U/api/v1/nothing)" = 401 ] && ok "unknown API path: 401" || bad "unknown API path answered differently"
 runuser -u pero -- sh -c 'test -w /opt/pero/server/current/web/index.html' && bad "the service can write to its web files" || ok "the service cannot change the web files"
 [ "$(stat -c %U /opt/pero/server/current/web/index.html)" = root ] && ok "web files are root-owned" || bad "web files not root-owned"
-journalctl -u pero-server -n 50 --no-pager | grep -q 'web client served' && ok "log says the web client is served" || bad "no web client line in the log"
+LOG="$(journalctl -u pero-server -n 50 --no-pager)"   # not piped into grep -q: with pipefail an early exit of grep can fail the pipe
+grep -q 'web client served' <<<"$LOG" && ok "log says the web client is served" || bad "no web client line in the log"
 [ "$fail" -eq 0 ] && echo "SMOKE TEST PASSED" || { echo "SMOKE TEST FAILED"; exit 1; }
