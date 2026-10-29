@@ -7,7 +7,7 @@ Status: all 6 parts implemented and confirmed on branch `feat/data-foundation`, 
 |---|---|
 | 1. Data model and migrations ([#16](https://github.com/Olmer1st/pero/issues/16)) | confirmed |
 | 2. Manuscript store, passage IDs, book/chapter/scene API ([#17](https://github.com/Olmer1st/pero/issues/17)) | confirmed |
-| 3. Import, export, offline `check-import` ([#18](https://github.com/Olmer1st/pero/issues/18)) | confirmed; real-chapters check deferred ([#23](https://github.com/Olmer1st/pero/issues/23)) |
+| 3. Import, export, offline `check-import` ([#18](https://github.com/Olmer1st/pero/issues/18)) | confirmed; real-chapters check passed 2026-10-28 ([#23](https://github.com/Olmer1st/pero/issues/23)): 17 files, 109 scenes, 3734 passages, no text lost, 17 of 17 byte-identical |
 | 4. Story graph API ([#19](https://github.com/Olmer1st/pero/issues/19)) | confirmed |
 | 5. Canon ledger API ([#20](https://github.com/Olmer1st/pero/issues/20)) | confirmed |
 | 6. Device authentication ([#21](https://github.com/Olmer1st/pero/issues/21)) | confirmed |
@@ -40,7 +40,6 @@ Request and answer shapes, error codes and rules are in `docs/data-model.md`. Er
 
 ### Known gaps
 - Not deployed (issue #22). The deploy needs: the new binary, the data folder, `ReadWritePaths` in the systemd unit (`ProtectSystem=strict`), `data_dir` in `server.toml`, a server certificate reissued for the reserved address 10.0.0.106 (CA key stays on the laptop), a check that `git` runs inside the sandbox, `device add` for each client, a smoke test, and removal of the temporary sudo grant on the server.
-- Real chapters were never run through the importer (the folder does not exist yet, issue #23). Run `pero-server check-import` on them when it does and report the counts.
 - `/health` is still open, and there are no idle timeouts after the TLS handshake (issue #12).
 - No automatic merge of concurrent edits (the second writer gets 409 and decides). Deleting books, chapters or scenes is not implemented. Import always creates a new book. Bulk approval of facts is turn 7. Full list in `docs/data-model.md` (Known gaps).
 
