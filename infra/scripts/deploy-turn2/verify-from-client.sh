@@ -4,12 +4,13 @@
 set -uo pipefail
 HOST="${1:?usage: $0 <ssh-alias>}"
 CA="${PERO_CA_DIR:-$HOME/.pero-ca}/ca.crt"
-ADDR="$(ssh -G "$HOST" | awk '$1=="hostname"{print $2}')"
+ADDR="$(getent ahostsv4 writer.local | awk '{print $1; exit}')"   # the alias may point to the name, not a number
+[ -n "$ADDR" ] || { echo "writer.local does not resolve"; exit 1; }
 fail=0; ok(){ echo "PASS  $1"; }; bad(){ echo "FAIL  $1"; fail=1; }
 code(){ curl -sS -m 10 --cacert "$CA" -o /dev/null -w '%{http_code}' "$@" 2>/dev/null; }
 H="$(curl -sS -m 20 --cacert "$CA" https://writer.local:8443/health 2>&1)"
 echo "$H" | grep -q '"status":"ok"' && ok "health over HTTPS via writer.local" || bad "health not ok: $H"
-curl -sS -m 10 --cacert "$CA" -o /dev/null "https://$(ssh -G "$HOST" | awk '$1=="hostname"{print $2}'):8443/health" && ok "certificate also valid for the server address" || bad "address does not match the certificate"
+curl -sS -m 10 --cacert "$CA" -o /dev/null "https://$ADDR:8443/health" && ok "certificate also valid for the server address" || bad "address does not match the certificate"
 echo | openssl s_client -connect writer.local:8443 -servername writer.local -tls1_3 2>/dev/null | openssl x509 -noout -ext subjectAltName | grep -q "IP Address:$ADDR" && ok "certificate lists the current address" || bad "certificate does not list the current address"
 [ "$(code https://writer.local:8443/api/v1/books)" = 401 ] && ok "API without a token: 401" || bad "API without a token did not give 401"
 [ "$(code -H 'Authorization: Bearer pero_0000000000000000000000000000000000000000000000000000000000000000' https://writer.local:8443/api/v1/books)" = 401 ] && ok "API with a wrong token: 401" || bad "API with a wrong token did not give 401"
