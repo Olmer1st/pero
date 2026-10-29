@@ -18,7 +18,7 @@ cp -r "$ROOT/client/dist" "$OUT/payload/web"
 [ -f "$OUT/payload/web/index.html" ] || { echo "The client build has no index.html." >&2; exit 1; }
 ( cd "$OUT/payload/web" && find . -type f | sort | xargs sha256sum ) > "$OUT/payload/web.sha256"
 
-cp "$HERE"/10-install.sh "$HERE"/20-smoke.sh "$HERE"/30-rollback.sh "$OUT/bundle/"
+cp "$HERE"/10-install.sh "$HERE"/20-smoke.sh "$HERE"/25-seed-sample.sh "$HERE"/30-rollback.sh "$OUT/bundle/"
 cp "$HERE/sudo-allow.txt.tmpl" "$OUT/bundle/sudo-allow.txt"
 ( cd "$OUT/bundle" && sha256sum *.sh sudo-allow.txt > SHA256SUMS )
 ( cd "$OUT/payload" && sha256sum pero-server web.sha256 )
