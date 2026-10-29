@@ -20,6 +20,7 @@ mod store;
 #[cfg(test)]
 mod testkit;
 mod tls;
+mod web;
 
 use std::process::ExitCode;
 
@@ -229,7 +230,7 @@ async fn run() -> Result<(), String> {
         env!("CARGO_PKG_VERSION"),
         cfg.bind
     );
-    let mut app = health::router(health::AppState::new(cfg.llm, cfg.languagetool));
+    let mut api_store = None;
     if let Some(data_dir) = &cfg.data_dir {
         // Every API route needs the token of a registered device (see `api::router`).
         let pool = db::open(&data_dir.join("pero.db")).await?;
@@ -244,15 +245,42 @@ async fn run() -> Result<(), String> {
                  `pero-server device add NAME`"
             );
         }
-        app = app.merge(api::router(store));
+        api_store = Some(store);
         eprintln!("manuscript API enabled, data in {}", data_dir.display());
     }
+    if let Some(web_dir) = &cfg.web_dir {
+        web::check(web_dir)?;
+        eprintln!("web client served from {}", web_dir.display());
+    }
+    let app = compose(
+        health::router(health::AppState::new(cfg.llm, cfg.languagetool)),
+        cfg.web_dir,
+        api_store,
+    );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await
         .map_err(|e| e.to_string())?;
     eprintln!("pero-server stopped");
     Ok(())
+}
+
+/// Puts the parts of the server together. The API goes in last, on purpose: its guard also answers
+/// for unknown paths under `/api/v1` (401 without a token), and axum keeps only the fallback of the
+/// router that is merged in last.
+fn compose(
+    base: axum::Router,
+    web_dir: Option<std::path::PathBuf>,
+    store: Option<std::sync::Arc<store::Store>>,
+) -> axum::Router {
+    let mut app = base;
+    if let Some(dir) = web_dir {
+        app = app.merge(web::router(dir));
+    }
+    if let Some(store) = store {
+        app = app.merge(api::router(store));
+    }
+    app
 }
 
 #[tokio::main]

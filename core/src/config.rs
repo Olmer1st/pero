@@ -18,6 +18,9 @@ pub struct Config {
     pub languagetool: String,
     /// Folder for the SQLite database and the book repositories. Without it the manuscript API is off.
     pub data_dir: Option<PathBuf>,
+    /// Folder with the built web client (`index.html` and `assets/`). Without it only the API and
+    /// `/health` are served.
+    pub web_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -61,6 +64,19 @@ languagetool = "127.0.0.1:8010"
             .parse()
             .unwrap();
         assert_eq!(c.data_dir, Some(PathBuf::from("/var/lib/pero/data")));
+    }
+
+    #[test]
+    fn web_dir_is_optional() {
+        let c: Config = GOOD.parse().unwrap();
+        assert_eq!(c.web_dir, None);
+        let c: Config = format!("{GOOD}web_dir = \"/opt/pero/server/current/web\"\n")
+            .parse()
+            .unwrap();
+        assert_eq!(
+            c.web_dir,
+            Some(PathBuf::from("/opt/pero/server/current/web"))
+        );
     }
 
     #[test]

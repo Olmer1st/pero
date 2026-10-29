@@ -3,3 +3,5 @@
 .env
 *.key
 *.pem
+/client/node_modules/
+/client/dist/

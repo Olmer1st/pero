@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "io-util"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "io-util", "fs"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
