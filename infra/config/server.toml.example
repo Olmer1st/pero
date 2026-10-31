@@ -7,3 +7,5 @@ languagetool = "127.0.0.1:8010"         # LanguageTool (loopback)
 # data_dir = "/var/lib/pero/data"       # SQLite file and book repositories; the manuscript API stays off without it.
 #                                       # Every API route then needs a device token: register one with
 #                                       # `sudo -u pero pero-server device add NAME` (docs/data-model.md).
+# web_dir = "/opt/pero/server/current/web"   # the built web client (index.html and assets/), root-owned; the page is
+#                                            # open to anyone who can reach the server, the API behind it needs a token.

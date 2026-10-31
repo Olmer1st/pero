@@ -1,10 +1,10 @@
 //! `GET /health`: the server's own status and the status of the two local services.
 //! No secrets and no manuscript data. Results are cached for a few seconds so that
 //! repeated requests cannot turn the endpoint into a load generator against the local services.
+pub use pero_shared::health::{HealthReport as Report, ServiceStatus, Services};
 
 use crate::http_probe;
 use axum::{Json, Router, extract::State, routing::get};
-use serde::Serialize;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -24,27 +24,6 @@ struct Inner {
     llm: String,
     languagetool: String,
     cache: Mutex<Option<(Instant, Report)>>,
-}
-
-#[derive(Clone, Serialize, Debug, PartialEq)]
-pub struct ServiceStatus {
-    pub status: &'static str,
-    pub latency_ms: u64,
-}
-
-#[derive(Clone, Serialize, Debug, PartialEq)]
-pub struct Services {
-    pub llm: ServiceStatus,
-    pub languagetool: ServiceStatus,
-}
-
-#[derive(Clone, Serialize, Debug, PartialEq)]
-pub struct Report {
-    /// `ok` when both local services answer, otherwise `degraded`.
-    pub status: &'static str,
-    pub version: &'static str,
-    pub uptime_seconds: u64,
-    pub services: Services,
 }
 
 impl AppState {

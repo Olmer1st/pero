@@ -1,5 +1,56 @@
 # Progress
 
+## Turn 3 — client shell: shared types, web interface, desktop app
+Status: complete and **deployed** (web page, parts 2–4; [milestone](https://github.com/Olmer1st/pero/milestone/3), one pull request). The server serves the page at `https://writer.local:8443/`. The desktop app is built on the owner's laptop and not deployed anywhere (it is a program, not a service).
+
+| Part | Status |
+|---|---|
+| 1. Shared API types, generated for TypeScript ([#26](https://github.com/Olmer1st/pero/issues/26)) | confirmed |
+| 2. Web shell: sign-in, books, import, status bar, page served by the server ([#27](https://github.com/Olmer1st/pero/issues/27)) | confirmed, deployed |
+| 3. Scene editor with stable passage IDs ([#28](https://github.com/Olmer1st/pero/issues/28)) | confirmed, deployed |
+| 4. Story bible screens: characters and places, timeline, canon ledger ([#29](https://github.com/Olmer1st/pero/issues/29)) | confirmed, deployed |
+| 5. Desktop app with pinned CA, keychain token, server discovery ([#30](https://github.com/Olmer1st/pero/issues/30)) | confirmed (token kept across a restart) |
+
+### What works
+- **Types**: all request and answer types are defined once in `shared/` (`pero-shared`); the server uses them and `client/src/generated/api.ts` is generated from them. A test fails the build when the committed file is out of date (`PERO_UPDATE_TYPES=1 cargo test -p pero-shared` regenerates it).
+- **Web page**: Svelte 5 + Vite, CodeMirror 6 for the editor; no other runtime dependency. Served by `pero-server` itself (`web_dir`), only `/` and `/assets/<file>`, strict Content-Security-Policy with a per-request nonce for styles, scripts same-origin only. Screens use the `#` part of the address.
+- **Sign-in**: paste a device token. In the browser it is kept in memory only (reload signs out; a password manager can fill the field). In the desktop app it is kept in the system keychain and the page never holds it.
+- **Books**: list, import chapters (Markdown files, one per chapter), chapter and scene navigator.
+- **Scene editor**: one Markdown text per scene; on every save `client/src/lib/passages.ts` decides which old passage each paragraph continues, so passage IDs survive edits, splits and merges. A save based on an old revision gets 409 and the author chooses: keep mine, load the other, or copy my text. Unsaved changes are guarded (links, back, closing the tab, signing out). Ctrl+S saves.
+- **Story bible**: characters and places with aliases and relationships; timeline events with participants and reordering; canon ledger with approve / reject / back to hypothesis, history, editing, evidence chips that open the scene at the cited paragraph, and "Evidence is still correct" to clear the stale flag. The buttons follow the server's transition rules.
+- **Desktop app** (Tauri v2, Linux): its own Cargo workspace in `desktop/src-tauri`. Requests are made by the app, not the web view, over TLS that trusts only the home CA compiled into the binary. The page may only ask for `/health` and `/api/v1/...`. Finds the server at `writer.local:8443` or at addresses the owner typed. `pero-desktop --check` tests discovery and the keychain without a window.
+- Tests: server 116 + 1 (types drift test), client 31 (API, desktop path, passage alignment, canon rules), desktop 4. `cargo fmt`, `clippy -D warnings`, `cargo audit`, `cargo deny check` clean for the server (194 crates) and the desktop app (499 crates, approved exceptions in `desktop/deny.toml`). `npm audit --omit=dev`: 0 findings; the dev tree has 2 low findings (see below).
+
+### How to build and run
+| What | How |
+|---|---|
+| Quality gate, web | from `client/`: `npm ci`, `npm run check`, `npm test`, `npm run build`, `npm audit --omit=dev` (Node 22 at `~/.local/node/bin`; `.npmrc` disables install scripts) |
+| Local end-to-end | `client/e2e/run-local.sh` starts a throw-away CA, server and data folder and runs the end-to-end script against the real API; `PERO_SERVE=1` keeps it running and prints a temporary token. Details in `client/README.md` |
+| Dev server | `npm run dev` in `client/` with `PERO_DEV_SERVER=https://writer.local:8443` proxies the API |
+| Deploy the page | `infra/scripts/deploy-client/` (`00-prepare.sh` on the laptop, owner installs the temporary grant on the server, `10-install.sh`, `20-smoke.sh`, optional `25-seed-sample.sh`, `verify-from-client.sh`, owner removes the grant on the server). Rollback: `30-rollback.sh`. Steps in its `README.md` |
+| Build the desktop app | `desktop/build.sh` (checks and builds the web page, then runs the desktop tests, `cargo audit`, `cargo deny` and `cargo build --release -j 2` in `desktop/src-tauri`; needs `~/.pero-ca/ca.crt`, which is compiled in). Binary: `desktop/src-tauri/target/release/pero-desktop` |
+| Menu entry | `desktop/install-launcher.sh` (per user, no root) |
+| Desktop prerequisites | Ubuntu packages `libwebkit2gtk-4.1-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev` (installed). Notes in `desktop/README.md` |
+
+### Known issues and gaps
+- **Not in the client yet**: creating, renaming, reordering and deleting chapters and scenes (the API can reorder; deleting is not implemented in the server either); autosave; search across the book; deleting facts (by design they are rejected, never deleted).
+- **Browser sign-in is per page load**: the token is in memory, so a reload asks for it again (owner's choice). The desktop app is the way to stay signed in.
+- **History lives only on the server**: each book is a Git repository in `/var/lib/pero/data/books/<book-id>/`; there is no backup yet. A backup plan (a periodic copy to the laptop or an external disk) should be decided before real writing starts.
+- **Desktop app**: Linux only (no macOS or Windows build); its page policy allows inline styles (the editor writes styles at run time and the bundled page has no per-request nonce), scripts stay same-origin only. The CA is compiled in, so **when the CA is renewed (2031) the app must be rebuilt**. Tailscale discovery is dropped (Tailscale is deferred).
+- **Dependency exceptions** (all approved, listed with reasons): desktop `deny.toml` (MPL-2.0 crates used unmodified, one CDLA-Permissive crate, five advisory warnings that are not vulnerabilities); dev-only npm audit finding (deepmerge via the Svelte Vite plugin, build time only).
+- **Not verified by the assistant**: Ctrl+S with real keystrokes (verified by dispatching the event), the desktop app's sign-in path with a real token (the owner's check).
+- Still open from earlier turns: back up `~/.pero-ca` offline; lid-close test (issue #3); optional decisions in issue #12 (`/health` login, idle timeouts); a DHCP reservation was applied and the certificate reissued in turn 2. **Server certificate expires 2027-10-29: renew by 2027-09-29 with `deploy-turn2/10-install.sh`**, not part 8's script.
+- The owner's real book is imported on the server (exactly one book) and holds one sample AI-hypothesis fact (added by `25-seed-sample.sh`; it can be rejected, not deleted).
+
+### Notes for turn 4 (deterministic checks)
+- Findings must anchor to **passage IDs** (the editor and the Canon screen already open a scene at `#/scene/<id>/<passageId>`; a findings panel can use the same address).
+- A fix is applied as a normal edit: the client turns the text into paragraphs and `align()` keeps IDs, so a fix inside one paragraph keeps its passage ID. Checks must never edit text themselves.
+- New shared types go in `shared/` (derive `TS`, register in `shared/src/typescript.rs`); regenerate with `PERO_UPDATE_TYPES=1`. The client adds a section next to the four in `BookPage.svelte` and a function group in `lib/api.ts`.
+- New server routes get the same device-token guard (all `/api/v1` routes are behind one middleware) and tests with `testkit::Server`.
+- The server's sandbox (`ProtectSystem=strict`, writable only `/var/lib/pero/data`) applies to any new service or file the checks need; a Python sidecar is a new service and needs its own reviewed deploy scripts and grant.
+- The server has no Rust toolchain; binaries are built on the 8 GB laptop with `-j 3`. The sidecar's Python dependencies need pinned versions and an audit (engineering rules).
+- Deploy pattern for every change on the server: scripts reviewed first, owner installs the grant on the **server**, `sudo -n -l` is checked before anything runs, owner removes the grant, assistant verifies.
+
 ## Turn 2 — manuscript store, story graph, canon ledger, server API
 Status: complete, merged (PR 24) and **deployed on 2026-10-29** ([issue #22](https://github.com/Olmer1st/pero/issues/22), scripts in `infra/scripts/deploy-turn2/`). The server runs the turn 2 binary with `data_dir = /var/lib/pero/data`, a certificate for `writer.local` and the reserved address (valid to 2027-10-29: **renew by 2027-09-29** with `deploy-turn2/10-install.sh`, not part 8's script), and no registered device yet.
 

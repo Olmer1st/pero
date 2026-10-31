@@ -1,10 +1,14 @@
 //! The story graph: entities (characters, places, organizations), their aliases, relationships
 //! between them, and timeline events. Authored structure kept in SQLite only; the prose lives in the
 //! book repositories. Every function validates its input and reports problems as `StoreError`.
+pub use pero_shared::ENTITY_KINDS;
+pub use pero_shared::graph::{
+    Entity, EntityPatch, Event, EventPatch, NewEntity, NewEvent, NewRelationship, Participant,
+    Relationship, RelationshipPatch,
+};
 
 use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::{ids, manuscript, store::StoreError};
@@ -13,19 +17,9 @@ pub const MAX_ALIASES: usize = 50;
 pub const MAX_PARTICIPANTS: usize = 200;
 const MAX_DESCRIPTION_CHARS: usize = 5000;
 const MAX_KIND_CHARS: usize = 100;
-const ENTITY_KINDS: [&str; 3] = ["character", "place", "organization"];
 
 fn invalid(m: impl Into<String>) -> StoreError {
     StoreError::Invalid(m.into())
-}
-
-/// Distinguishes a field that is absent (keep) from one that is `null` (clear).
-fn double_option<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    Deserialize::deserialize(d).map(Some)
 }
 
 // ---- validation helpers ----------------------------------------------------------------------
@@ -128,19 +122,6 @@ async fn entity_kind_in_book(
 
 // ---- entities --------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Entity {
-    pub id: String,
-    pub book_id: String,
-    pub kind: String,
-    pub name: String,
-    pub description: String,
-    /// Other names and forms, sorted.
-    pub aliases: Vec<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 #[derive(sqlx::FromRow)]
 struct EntityRow {
     id: String,
@@ -171,27 +152,6 @@ macro_rules! entity_columns {
     () => {
         "id, book_id, kind, name, description, created_at, updated_at"
     };
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NewEntity {
-    pub kind: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub aliases: Vec<String>,
-}
-
-/// The kind of an entity cannot change; unknown fields (including `kind`) are refused.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EntityPatch {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    /// Replaces all aliases when present.
-    pub aliases: Option<Vec<String>>,
 }
 
 pub async fn create_entity(
@@ -420,19 +380,6 @@ pub async fn delete_entity(pool: &SqlitePool, id: &str, cascade: bool) -> Result
 
 // ---- relationships ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Relationship {
-    pub id: String,
-    pub book_id: String,
-    pub from_entity_id: String,
-    pub to_entity_id: String,
-    pub kind: String,
-    pub directed: bool,
-    pub description: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 #[derive(sqlx::FromRow)]
 struct RelationshipRow {
     id: String,
@@ -466,31 +413,6 @@ macro_rules! relationship_columns {
     () => {
         "id, book_id, from_entity_id, to_entity_id, kind, directed, description, created_at, updated_at"
     };
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NewRelationship {
-    pub from_entity_id: String,
-    pub to_entity_id: String,
-    pub kind: String,
-    #[serde(default = "yes")]
-    pub directed: bool,
-    #[serde(default)]
-    pub description: String,
-}
-
-fn yes() -> bool {
-    true
-}
-
-/// The two entities of a relationship cannot change; delete and create a new one instead.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RelationshipPatch {
-    pub kind: Option<String>,
-    pub directed: Option<bool>,
-    pub description: Option<String>,
 }
 
 /// True if the same relationship already exists (for an undirected one, in either direction).
@@ -671,31 +593,6 @@ pub async fn delete_relationship(pool: &SqlitePool, id: &str) -> Result<(), Stor
 
 // ---- timeline events -------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Participant {
-    pub entity_id: String,
-    #[serde(default)]
-    pub role: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Event {
-    pub id: String,
-    pub book_id: String,
-    pub title: String,
-    pub description: String,
-    /// The date as the author writes it (fictional calendars are fine).
-    pub when_text: Option<String>,
-    /// Author-controlled order on the timeline; lower comes first.
-    pub sort_order: i64,
-    pub scene_id: Option<String>,
-    pub place_id: Option<String>,
-    pub participants: Vec<Participant>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 #[derive(sqlx::FromRow)]
 struct EventRow {
     id: String,
@@ -732,37 +629,6 @@ macro_rules! event_columns {
     () => {
         "id, book_id, title, description, when_text, sort_order, scene_id, place_id, created_at, updated_at"
     };
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NewEvent {
-    pub title: String,
-    #[serde(default)]
-    pub description: String,
-    pub when_text: Option<String>,
-    /// Defaults to 10 after the last event of the book.
-    pub sort_order: Option<i64>,
-    pub scene_id: Option<String>,
-    pub place_id: Option<String>,
-    #[serde(default)]
-    pub participants: Vec<Participant>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EventPatch {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
-    pub when_text: Option<Option<String>>,
-    pub sort_order: Option<i64>,
-    #[serde(default, deserialize_with = "double_option")]
-    pub scene_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    pub place_id: Option<Option<String>>,
-    /// Replaces all participants when present.
-    pub participants: Option<Vec<Participant>>,
 }
 
 fn clean_when(value: &Option<String>) -> Result<Option<String>, StoreError> {

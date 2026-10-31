@@ -9,6 +9,10 @@
 //!   chapters/NNN-slug/chapter.toml     id, title
 //!   chapters/NNN-slug/NNN-slug.md      one scene: TOML front-matter and paragraphs with ID markers
 //! Order is the numeric prefix; a reorder is a rename. IDs live inside the files and never change.
+pub use pero_shared::manuscript::{
+    Book, Chapter, ExportFile, ImportSummary, PassageOut, SaveScene, Saved, Scene, SceneFields,
+    SceneInfo,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -86,121 +90,11 @@ fn invalid(e: impl Into<String>) -> StoreError {
 
 // ---- data shown to clients -------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct Book {
-    pub id: String,
-    pub title: String,
-    pub language: String,
-    pub head_commit: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct Chapter {
-    pub id: String,
-    pub book_id: String,
-    pub position: i64,
-    pub title: String,
-}
-
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct SceneInfo {
-    pub id: String,
-    pub book_id: String,
-    pub chapter_id: String,
-    pub position: i64,
-    pub title: String,
-    pub language: String,
-    pub pov: Option<String>,
-    pub date: Option<String>,
-    pub location: Option<String>,
-}
-
 #[derive(sqlx::FromRow)]
 struct SceneRow {
     #[sqlx(flatten)]
     info: SceneInfo,
     path: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct PassageOut {
-    /// `None` for a paragraph written outside Pero that has no marker yet.
-    pub id: Option<String>,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Scene {
-    #[serde(flatten)]
-    pub info: SceneInfo,
-    pub passages: Vec<PassageOut>,
-    /// SHA-256 of the scene file; send it back as `base_revision` when saving.
-    pub revision: String,
-}
-
-/// Scene metadata as the client sends it. Saving replaces all of it.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SceneFields {
-    #[serde(default)]
-    pub title: String,
-    pub language: Option<String>,
-    pub pov: Option<String>,
-    pub date: Option<String>,
-    pub location: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PassageIn {
-    /// Existing passage ID, or absent for a new paragraph.
-    pub id: Option<String>,
-    pub text: String,
-}
-
-/// A passage that was merged into another one (its identity moves there for evidence purposes).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Merge {
-    pub from: String,
-    pub into: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SaveScene {
-    pub base_revision: String,
-    pub fields: SceneFields,
-    pub passages: Vec<PassageIn>,
-    #[serde(default)]
-    pub merged: Vec<Merge>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Saved {
-    pub scene: Scene,
-    /// The new commit, or `None` when the save changed nothing.
-    pub commit: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ImportSummary {
-    pub book: Book,
-    pub chapters: usize,
-    pub scenes: usize,
-    pub passages: usize,
-    /// Files that had no `# ` heading, so the chapter title was made from the file name.
-    pub titles_from_filename: Vec<String>,
-}
-
-/// A chapter written back out as Markdown.
-#[derive(Debug, Serialize)]
-pub struct ExportFile {
-    pub name: String,
-    pub content: String,
-    /// True when the chapter title is the one the import made up from a file name.
-    #[serde(skip)]
-    pub title: String,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

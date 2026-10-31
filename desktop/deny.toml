@@ -1,0 +1,36 @@
+# cargo-deny policy for the desktop app (cd desktop/src-tauri && cargo deny --config ../deny.toml check).
+# The same rules as the server's (../deny.toml), plus the few exceptions that Tauri's dependency tree needs, each listed by crate
+# so that nothing else can slip in under the same license. The owner approved them on 2026-10-29 (docs/DECISIONS.md).
+[advisories]
+yanked = "deny"
+# Warnings that come with Tauri's Linux backend (the gtk-rs 0.18 stack) and the pure-Rust Secret Service client (zbus);
+# none is a vulnerability, and none can be fixed from here. Revisit when Tauri or keyring move on.
+ignore = [
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; build-time macro of the gtk-rs 0.18 stack used by Tauri on Linux" },
+  { id = "RUSTSEC-2024-0429", reason = "glib 0.18 VariantStrIter unsoundness; Tauri's Linux backend still uses glib 0.18, and this code path is not used by Pero" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained; used by the Secret Service client for the keychain" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained; used by the Secret Service client for the keychain" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained; used by the Secret Service client for the keychain" },
+]
+
+[licenses]
+allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CC0-1.0"]
+confidence-threshold = 0.9
+# MPL-2.0 is file-level copyleft: using these crates unmodified puts no obligation on Pero's own code.
+exceptions = [
+  { allow = ["MPL-2.0"], crate = "cssparser" },
+  { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+  { allow = ["MPL-2.0"], crate = "dtoa-short" },
+  { allow = ["MPL-2.0"], crate = "option-ext" },
+  { allow = ["MPL-2.0"], crate = "selectors" },
+  { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

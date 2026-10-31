@@ -1,6 +1,11 @@
 //! JSON API for books, chapters and scenes, under `/api/v1`. Thin: every rule lives in the store.
 //! Device authentication is added in a later part; until then this router must not be reachable
 //! from the network (see `main.rs`).
+use pero_shared::error::{ErrorBody, ErrorDetail};
+use pero_shared::manuscript::{
+    ExportResponse, ImportRequest, NewBook, NewChapter, NewScene, OrderBody, ReindexResponse,
+    TitleBody,
+};
 
 use std::sync::Arc;
 
@@ -13,12 +18,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
-use serde::Deserialize;
-use serde_json::{Value, json};
 
 use crate::{
     device::{self, Device, DeviceInfo},
-    import::{ImportFile, ParagraphMode},
     store::{
         Book, Chapter, ExportFile, ImportSummary, SaveScene, Saved, Scene, SceneFields, SceneInfo,
         Store, StoreError,
@@ -39,8 +41,15 @@ impl From<StoreError> for ApiError {
     }
 }
 
-fn error_body(code: &str, message: &str) -> Value {
-    json!({ "error": { "code": code, "message": message } })
+fn error_body(code: &str, message: &str) -> ErrorBody {
+    ErrorBody {
+        error: ErrorDetail {
+            code: code.into(),
+            message: message.into(),
+        },
+        issues: None,
+        current: None,
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -60,10 +69,7 @@ impl IntoResponse for ApiError {
                     "import_rejected",
                     "the files were not understood; nothing was imported",
                 );
-                body["issues"] = issues
-                    .iter()
-                    .map(|i| json!({ "file": i.file, "line": i.line, "message": i.message }))
-                    .collect();
+                body.issues = Some(issues.clone());
                 (StatusCode::UNPROCESSABLE_ENTITY, body)
             }
             StoreError::Exists(m) => (StatusCode::CONFLICT, error_body("already_exists", m)),
@@ -75,7 +81,7 @@ impl IntoResponse for ApiError {
             StoreError::Conflict(current) => {
                 let mut body =
                     error_body("revision_conflict", "the scene changed since it was read");
-                body["current"] = serde_json::to_value(current).unwrap_or(Value::Null);
+                body.current = Some(current.clone());
                 (StatusCode::CONFLICT, body)
             }
             StoreError::Internal(m) => {
@@ -88,54 +94,6 @@ impl IntoResponse for ApiError {
         };
         (status, Json(body)).into_response()
     }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NewBook {
-    title: String,
-    language: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ImportRequest {
-    title: String,
-    language: String,
-    #[serde(default)]
-    mode: ParagraphMode,
-    files: Vec<ImportFile>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Title {
-    title: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NewChapter {
-    title: String,
-    position: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NewScene {
-    #[serde(default)]
-    title: String,
-    language: Option<String>,
-    pov: Option<String>,
-    date: Option<String>,
-    location: Option<String>,
-    position: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Order {
-    ids: Vec<String>,
 }
 
 async fn list_books(State(s): State<Shared>) -> ApiResult<Json<Vec<Book>>> {
@@ -161,7 +119,7 @@ async fn rename_book(
     State(s): State<Shared>,
     AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
-    Json(t): Json<Title>,
+    Json(t): Json<TitleBody>,
 ) -> ApiResult<Json<Book>> {
     Ok(Json(
         s.update_book_title(&id, &t.title, &device.name).await?,
@@ -194,7 +152,7 @@ async fn reorder_chapters(
     State(s): State<Shared>,
     AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
-    Json(o): Json<Order>,
+    Json(o): Json<OrderBody>,
 ) -> ApiResult<Json<Vec<Chapter>>> {
     Ok(Json(s.reorder_chapters(&id, &o.ids, &device.name).await?))
 }
@@ -210,14 +168,22 @@ async fn import_book(
     Ok((StatusCode::CREATED, Json(summary)))
 }
 
-async fn export_book(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn export_book(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ExportResponse>> {
     let files: Vec<ExportFile> = s.export_book(&id).await?;
-    Ok(Json(json!({ "files": files })))
+    Ok(Json(ExportResponse { files }))
 }
 
-async fn reindex(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn reindex(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ReindexResponse>> {
     let report = s.reindex_book(&id).await?;
-    Ok(Json(json!({ "unmarked_paragraphs": report.unmarked })))
+    Ok(Json(ReindexResponse {
+        unmarked_paragraphs: report.unmarked,
+    }))
 }
 
 async fn get_chapter(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Chapter>> {
@@ -228,7 +194,7 @@ async fn rename_chapter(
     State(s): State<Shared>,
     AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
-    Json(t): Json<Title>,
+    Json(t): Json<TitleBody>,
 ) -> ApiResult<Json<Chapter>> {
     Ok(Json(
         s.update_chapter_title(&id, &t.title, &device.name).await?,
@@ -268,7 +234,7 @@ async fn reorder_scenes(
     State(s): State<Shared>,
     AuthDevice(device): AuthDevice,
     Path(id): Path<String>,
-    Json(o): Json<Order>,
+    Json(o): Json<OrderBody>,
 ) -> ApiResult<Json<Vec<SceneInfo>>> {
     Ok(Json(s.reorder_scenes(&id, &o.ids, &device.name).await?))
 }
@@ -405,6 +371,7 @@ pub fn router(store: Arc<Store>) -> Router {
 mod tests {
     use super::*;
     use crate::{device, testkit::Server};
+    use serde_json::{Value, json};
 
     #[tokio::test]
     async fn a_book_can_be_written_and_read_through_the_api() {

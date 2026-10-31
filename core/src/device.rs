@@ -1,8 +1,8 @@
 //! Devices and their API tokens. A token is 256 random bits shown once, as `pero_` and 64 hex
 //! characters; only its SHA-256 hash is stored. Tokens are looked up by hash on every request, so a
 //! revocation takes effect immediately. Devices are revoked, never deleted.
+pub use pero_shared::device::{Device, DeviceInfo};
 
-use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use crate::{ids, manuscript, store::StoreError};
@@ -12,22 +12,6 @@ const TOKEN_HEX_CHARS: usize = 64;
 const MAX_NAME_CHARS: usize = 60;
 fn invalid(m: impl Into<String>) -> StoreError {
     StoreError::Invalid(m.into())
-}
-
-/// The device a request was made by.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Device {
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
-pub struct DeviceInfo {
-    pub id: String,
-    pub name: String,
-    pub created_at: String,
-    pub last_seen_at: Option<String>,
-    pub revoked_at: Option<String>,
 }
 
 macro_rules! info_columns {

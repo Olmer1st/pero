@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use serde_json::{Value, json};
+use pero_shared::canon::HistoryResponse;
 
 use crate::{
     api::{ApiResult, AuthDevice},
@@ -128,9 +128,12 @@ async fn replace_evidence(
     Ok(Json(canon::replace_evidence(s.pool(), &id, &e).await?))
 }
 
-async fn history(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn history(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<HistoryResponse>> {
     let entries: Vec<HistoryEntry> = canon::history(s.pool(), &id).await?;
-    Ok(Json(json!({ "history": entries })))
+    Ok(Json(HistoryResponse { history: entries }))
 }
 
 async fn get_passage(
